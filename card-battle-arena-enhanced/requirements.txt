@@ -1,0 +1,31 @@
+# Core Dependencies
+pygame==2.6.0
+numpy==1.26.4
+
+# AI/ML Dependencies
+openai==1.14.3
+anthropic==0.25.8
+scikit-learn==1.4.2
+
+# Testing Dependencies
+pytest==8.1.1
+pytest-cov==5.0.0
+pytest-mock==3.14.0
+
+# Configuration & Utilities
+pydantic==2.7.1
+python-dotenv==1.0.1
+pyyaml==6.0.1
+
+# Async Support
+aiohttp==3.9.5
+asyncio==3.4.3
+
+# Monitoring & Analytics
+rich==13.7.1
+click==8.1.7
+
+# Development Tools
+black==24.4.2
+flake8==7.0.0
+mypy==1.9.0

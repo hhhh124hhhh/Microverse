@@ -20,7 +20,19 @@
       "WebFetch(domain:raw.githubusercontent.com)",
       "Read(//mnt/d/**)",
       "WebFetch(domain:12factor.ai)",
-      "WebFetch(domain:humanlayer.com)"
+      "WebFetch(domain:humanlayer.com)",
+      "WebFetch(domain:12factor.net)",
+      "WebFetch(domain:api.github.com)",
+      "Read(//tmp/**)",
+      "Bash(find:*)",
+      "Bash(mkdir:*)",
+      "Bash(virtualenv:*)",
+      "Bash(source:*)",
+      "Bash(python:*)",
+      "Bash(chmod:*)",
+      "Bash(./start.sh:*)",
+      "Bash(dos2unix:*)",
+      "Bash(timeout:*)"
     ],
     "deny": [],
     "ask": []
