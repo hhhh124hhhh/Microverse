@@ -8,7 +8,19 @@
       "Bash(claude:*)",
       "Read(//home/hwq/.config/**)",
       "Read(//home/hwq/**)",
-      "Bash(/mcp)"
+      "Bash(/mcp)",
+      "Bash(curl:*)",
+      "Bash(sh:*)",
+      "Bash(sudo apt:*)",
+      "Bash(python3:*)",
+      "Bash(~/.local/uv-env/bin/pip:*)",
+      "Bash(pip3 install:*)",
+      "WebFetch(domain:github.com)",
+      "WebSearch",
+      "WebFetch(domain:raw.githubusercontent.com)",
+      "Read(//mnt/d/**)",
+      "WebFetch(domain:12factor.ai)",
+      "WebFetch(domain:humanlayer.com)"
     ],
     "deny": [],
     "ask": []
