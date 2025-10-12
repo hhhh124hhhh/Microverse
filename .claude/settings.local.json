@@ -1,0 +1,16 @@
+{
+  "permissions": {
+    "allow": [
+      "Bash(npx:*)",
+      "Bash(uvx mcp-server-fetch:*)",
+      "Bash(pip install:*)",
+      "Bash(/doctor)",
+      "Bash(claude:*)",
+      "Read(//home/hwq/.config/**)",
+      "Read(//home/hwq/**)",
+      "Bash(/mcp)"
+    ],
+    "deny": [],
+    "ask": []
+  }
+}
