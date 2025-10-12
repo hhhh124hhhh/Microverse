@@ -92,3 +92,5 @@ out/
 # Temporary files
 temp/
 tmp/
+# Environment variables
+.env.local
