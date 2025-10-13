@@ -12,6 +12,7 @@ from pathlib import Path
 
 from .strategies.base import AIStrategy, AIAction, GameContext, ActionType, AIStrategyError
 from .strategies.rule_based import RuleBasedStrategy
+from .debug_tools import debugger
 
 
 # 配置日志
@@ -23,7 +24,7 @@ logger = logging.getLogger(__name__)
 class AIEngineConfig:
     """AI引擎配置"""
     default_strategy: str = "rule_based"
-    max_decision_time: float = 5.0
+    max_decision_time: float = 20.0  # 增加到20秒，与配置文件保持一致
     enable_learning: bool = True
     enable_monitoring: bool = True
     strategy_configs: Dict[str, Dict[str, Any]] = None
@@ -149,6 +150,9 @@ class AIEngine:
                           f"置信度: {action.confidence:.2f}, "
                           f"耗时: {action.execution_time:.3f}s")
                 self.total_decisions_made += 1
+
+                # 记录到调试工具
+                debugger.record_decision(action, strategy_name, context)
 
             return action
 

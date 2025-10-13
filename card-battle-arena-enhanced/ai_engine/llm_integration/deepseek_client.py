@@ -26,7 +26,7 @@ class DeepSeekClient(BaseLLMClient):
                 "Authorization": f"Bearer {self.api_key}",
                 "Content-Type": "application/json"
             }
-            timeout = aiohttp.ClientTimeout(total=30.0)
+            timeout = aiohttp.ClientTimeout(total=45.0)  # 增加到45秒，给LLM更多响应时间
             self.session = aiohttp.ClientSession(headers=headers, timeout=timeout)
         return self.session
 

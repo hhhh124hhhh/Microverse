@@ -18,7 +18,7 @@ class AISettings:
     default_strategy: str = "hybrid"
     default_personality: str = "adaptive_learner"
     enable_llm: bool = True
-    max_decision_time: float = 5.0
+    max_decision_time: float = 20.0  # 增加到20秒，给混合AI更多决策时间
 
     # DeepSeek配置
     deepseek_api_key: Optional[str] = None
@@ -87,7 +87,7 @@ class SettingsManager:
             default_strategy=os.getenv("DEFAULT_AI_STRATEGY", "hybrid"),
             default_personality=os.getenv("DEFAULT_PERSONALITY", "adaptive_learner"),
             enable_llm=os.getenv("ENABLE_LLM", "true").lower() == "true",
-            max_decision_time=float(os.getenv("MAX_DECISION_TIME", "5.0")),
+            max_decision_time=float(os.getenv("MAX_DECISION_TIME", "20.0")),
 
             deepseek_api_key=os.getenv("DEEPSEEK_API_KEY"),
             deepseek_model=os.getenv("DEEPSEEK_MODEL", "deepseek-chat"),

@@ -53,8 +53,8 @@ class HybridAIStrategy(AIStrategy):
         default_config = {
             # 策略配置
             "strategies": [
-                {"name": "rule_based", "weight": 0.4, "min_confidence": 0.3},
-                {"name": "llm_enhanced", "weight": 0.6, "min_confidence": 0.5}
+                {"name": "rule_based", "weight": 0.6, "min_confidence": 0.3},
+                {"name": "llm_enhanced", "weight": 0.4, "min_confidence": 0.5}
             ],
 
             # 共识方法
@@ -62,7 +62,7 @@ class HybridAIStrategy(AIStrategy):
 
             # 性能阈值
             "min_consensus_score": 0.3,  # 最小共识分数
-            "max_decision_time": 5.0,    # 最大决策时间
+            "max_decision_time": 25.0,   # 最大决策时间（增加到25秒）
 
             # 自适应配置
             "enable_adaptive_weights": True,  # 启用自适应权重
@@ -135,21 +135,30 @@ class HybridAIStrategy(AIStrategy):
         使用混合策略做出决策
         """
         start_time = time.time()
+        logger.info("🎯 混合AI开始决策过程...")
 
         try:
             # 获取所有子策略的决策
+            logger.info("📊 步骤1: 收集各策略决策...")
             strategy_decisions = await self._collect_strategy_decisions(context)
 
             if not strategy_decisions:
-                logger.warning("没有策略返回有效决策")
+                logger.warning("❌ 没有策略返回有效决策，使用回退策略")
                 return await self._fallback_decision(context)
 
+            # 显示收集到的决策
+            logger.info(f"✅ 收集到 {len(strategy_decisions)} 个策略决策:")
+            for strategy_name, action in strategy_decisions:
+                logger.info(f"   - {strategy_name}: {action.action_type.value} (置信度: {action.confidence:.2f})")
+
             # 生成混合决策
+            logger.info("🔄 步骤2: 生成混合决策...")
             hybrid_decision = await self._generate_hybrid_decision(strategy_decisions, context)
 
             # 验证决策质量
+            logger.info("✔️ 步骤3: 验证决策质量...")
             if not self._validate_decision(hybrid_decision):
-                logger.warning("混合决策未通过验证，使用回退策略")
+                logger.warning(f"❌ 混合决策未通过验证 (共识分数: {hybrid_decision.consensus_score:.2f})，使用回退策略")
                 return await self._fallback_decision(context)
 
             # 更新性能统计
@@ -158,17 +167,23 @@ class HybridAIStrategy(AIStrategy):
 
             # 自适应调整权重
             if self.config["enable_adaptive_weights"]:
+                logger.info("🔧 步骤4: 自适应调整权重...")
                 self._adaptive_weight_adjustment(hybrid_decision)
 
             self.decisions_made += 1
-            logger.info(f"混合AI决策完成: {hybrid_decision.action.action_type.value}, "
+            logger.info(f"🎉 混合AI决策完成: {hybrid_decision.action.action_type.value}, "
                       f"共识分数: {hybrid_decision.consensus_score:.2f}, "
                       f"耗时: {hybrid_decision.execution_time:.3f}s")
+            logger.info(f"💭 推理过程: {hybrid_decision.action.reasoning}")
+
+            # 显示参与决策的策略
+            if hybrid_decision.participating_strategies:
+                logger.info(f"👥 参与策略: {', '.join(hybrid_decision.participating_strategies)}")
 
             return hybrid_decision.action
 
         except Exception as e:
-            logger.error(f"混合AI决策失败: {e}")
+            logger.error(f"💥 混合AI决策失败: {e}")
             self.consensus_failures += 1
             return await self._fallback_decision(context)
 
@@ -202,7 +217,14 @@ class HybridAIStrategy(AIStrategy):
                                           context: GameContext) -> Tuple[str, Optional[AIAction]]:
         """带超时的策略执行"""
         try:
-            timeout = self.config["max_decision_time"] / len(self.sub_strategies)
+            # 为LLM策略分配更长的超时时间
+            if strategy_name == "llm_enhanced":
+                timeout = 20.0  # LLM策略给20秒，避免超时
+                logger.info(f"🧠 执行LLM增强策略（超时: {timeout}秒）...")
+            else:
+                timeout = 5.0  # 规则策略给5秒
+                logger.info(f"📋 执行规则策略（超时: {timeout}秒）...")
+
             action = await asyncio.wait_for(
                 strategy.execute_with_timing(context),
                 timeout=timeout
@@ -210,12 +232,16 @@ class HybridAIStrategy(AIStrategy):
 
             if action:
                 self.strategy_usage_count[strategy_name] += 1
+                logger.info(f"✅ 策略 {strategy_name} 决策完成: {action.action_type.value}, "
+                          f"置信度: {action.confidence:.2f}, 耗时: {action.execution_time:.3f}s")
                 return strategy_name, action
+            else:
+                logger.warning(f"❌ 策略 {strategy_name} 无法做出决策")
 
         except asyncio.TimeoutError:
-            logger.warning(f"策略 {strategy_name} 执行超时")
+            logger.warning(f"⏰ 策略 {strategy_name} 执行超时（{timeout}秒）")
         except Exception as e:
-            logger.error(f"策略 {strategy_name} 执行失败: {e}")
+            logger.error(f"💥 策略 {strategy_name} 执行失败: {e}")
 
         return strategy_name, None
 

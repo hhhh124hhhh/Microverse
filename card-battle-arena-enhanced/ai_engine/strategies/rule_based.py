@@ -152,12 +152,12 @@ class RuleBasedStrategy(AIStrategy):
         score += card.get("cost", 0) * weights["cost"]
 
         # 特殊能力加成
-        abilities = card.get("abilities", [])
-        for ability in abilities:
-            score += weights.get(ability, 0)
+        mechanics = card.get("mechanics", [])
+        for mechanic in mechanics:
+            score += weights.get(mechanic, 0)
 
         # 场面状况调整
-        if context.opponent_field and "taunt" in abilities:
+        if context.opponent_field and "taunt" in mechanics:
             score += 1.0  # 对手有随从时，嘲讽更有价值
 
         return max(0, score)
@@ -192,9 +192,9 @@ class RuleBasedStrategy(AIStrategy):
         attacker_health = attacker.get("health", 0)
 
         # 检查目标特性
-        target_abilities = target.get("abilities", [])
-        is_taunt = "taunt" in target_abilities
-        is_stealth = "stealth" in target_abilities
+        target_mechanics = target.get("mechanics", [])
+        is_taunt = "taunt" in target_mechanics
+        is_stealth = "stealth" in target_mechanics
 
         # 无法攻击潜行随从
         if is_stealth:

@@ -20,9 +20,14 @@ from ai_engine.strategies.rule_based import RuleBasedStrategy
 from ai_engine.strategies.hybrid import HybridAIStrategy
 from ai_engine.agents.agent_personality import PersonalityManager
 from ai_engine.agents.ai_agent import AIAgent
+from ai_engine.debug_tools import debugger
 from game_engine.game_state.game_context import GameContext
 from game_engine.card_game import CardGame
 from game_ui import GameUI
+
+# Rich库导入
+from rich.panel import Panel
+from rich import box
 
 
 # 配置日志
@@ -36,6 +41,40 @@ logging.basicConfig(
 )
 
 logger = logging.getLogger(__name__)
+
+
+def safe_get_card_attr(card, attr_name, default=None):
+    """安全获取卡牌属性，支持对象和字典格式"""
+    try:
+        # 尝试直接访问属性（对象格式）
+        return getattr(card, attr_name)
+    except AttributeError:
+        try:
+            # 尝试字典访问
+            return card[attr_name]
+        except (KeyError, TypeError):
+            return default
+
+def get_card_name(card):
+    """获取卡牌名称"""
+    return safe_get_card_attr(card, 'name', '未知卡牌')
+
+def get_card_attack(card):
+    """获取卡牌攻击力"""
+    return safe_get_card_attr(card, 'attack', 0)
+
+def get_card_health(card):
+    """获取卡牌血量"""
+    return safe_get_card_attr(card, 'health', 0)
+
+def get_card_type(card):
+    """获取卡牌类型，兼容字典和对象格式"""
+    # 先尝试对象格式的card_type
+    card_type = safe_get_card_attr(card, 'card_type')
+    if card_type:
+        return card_type
+    # 再尝试字典格式的type
+    return safe_get_card_attr(card, 'type', 'minion')
 
 
 def parse_arguments():
@@ -147,6 +186,31 @@ def parse_arguments():
     # status命令 - 系统状态
     status_parser = subparsers.add_parser("status", help="显示系统状态 (Status - 状态)")
     status_parser.add_argument("--detailed", action="store_true", help="详细信息 (Detailed Info - 详细)")
+
+    # debug命令 - AI调试工具
+    debug_parser = subparsers.add_parser("debug", help="AI决策调试工具 (Debug - 调试)")
+    debug_subparsers = debug_parser.add_subparsers(dest="action", help="调试动作")
+
+    # performance子命令
+    perf_parser = debug_subparsers.add_parser("performance", help="显示AI性能摘要")
+
+    # export子命令
+    export_parser = debug_subparsers.add_parser("export", help="导出调试报告")
+    export_parser.add_argument("--output", "-o", help="输出文件路径")
+
+    # analyze子命令
+    analyze_parser = debug_subparsers.add_parser("analyze", help="分析决策模式")
+
+    # clear子命令
+    clear_parser = debug_subparsers.add_parser("clear", help="清空调试历史")
+
+    # save子命令
+    save_parser = debug_subparsers.add_parser("save", help="保存调试会话")
+    save_parser.add_argument("filename", nargs="?", help="会话文件名")
+
+    # load子命令
+    load_parser = debug_subparsers.add_parser("load", help="加载调试会话")
+    load_parser.add_argument("filename", help="会话文件名")
 
     # 全局选项 (Global Options - 全局选项)
     parser.add_argument("--version", action="version", version="Card Battle Arena Enhanced v1.0.0")
@@ -725,11 +789,23 @@ async def run_human_vs_ai(args):
 
                 # 根据难度调整思考时间
                 thinking_time = random.uniform(*difficulty_config["thinking_time_range"])
-                await asyncio.sleep(thinking_time)
 
                 # 创建游戏上下文给AI
                 state = game.get_game_state()
                 ai_state = state["opponent_state"]
+
+                # 转换AI手牌为AI策略能理解的格式
+                ai_hand_for_context = []
+                for card in current.hand:
+                    ai_hand_for_context.append({
+                        "name": get_card_name(card),
+                        "cost": safe_get_card_attr(card, 'cost', 0),
+                        "attack": get_card_attack(card),
+                        "health": get_card_health(card),
+                        "card_type": get_card_type(card),
+                        "mechanics": safe_get_card_attr(card, 'mechanics', []),
+                        "description": safe_get_card_attr(card, 'description', '')
+                    })
 
                 context = GameContext(
                     game_id=f"human_vs_ai_game_{games_played + 1}",
@@ -738,24 +814,46 @@ async def run_human_vs_ai(args):
                     phase="main",
 
                     player_health=ai_state["health"],
-                    player_max_health=ai_state["max_health"],
                     player_mana=ai_state["mana"],
-                    player_max_mana=ai_state["max_mana"],
-                    player_hand=[],
+                    player_hand=ai_hand_for_context,  # 传入AI的实际手牌
                     player_field=ai_state["field"],
-                    player_deck_size=0,
-
                     opponent_health=state["current_player_state"]["health"],
-                    opponent_max_health=state["current_player_state"]["max_health"],
                     opponent_mana=state["current_player_state"]["mana"],
-                    opponent_max_mana=state["current_player_state"]["max_mana"],
-                    opponent_field=state["current_player_state"]["field"],
-                    opponent_hand_size=len(state["current_player_state"]["hand"]),
-                    opponent_deck_size=0
+                    opponent_field=state["current_player_state"]["field"]
                 )
 
-                # AI决策
-                action = await ai_agent.make_decision(context)
+                # 显示AI分析过程
+                print(f"  🧠 分析当前局面...")
+                ai_hand = current.hand
+                playable_cards = [i for i, card in enumerate(ai_hand) if current.can_play_card(card)]
+                print(f"  📋 AI手牌状况: {len(ai_hand)}张手牌，{len(playable_cards)}张可出")
+
+                if playable_cards:
+                    card_names = []
+                    for i in playable_cards[:3]:
+                        card = current.hand[i]
+                        card_name = get_card_name(card)
+                        card_cost = safe_get_card_attr(card, 'cost', 0)
+                        card_names.append(f"{card_name}({card_cost}费)")
+                    print(f"  🃏 可出的牌: {', '.join(card_names)}")
+
+                # 模拟思考过程
+                await asyncio.sleep(thinking_time / 2)
+                print(f"  💭 评估策略选择...")
+
+                await asyncio.sleep(thinking_time / 2)
+                print(f"  ⚡ 正在制定最优决策...")
+
+                # AI决策 - 增加超时处理和详细显示
+                try:
+                    action = await asyncio.wait_for(ai_agent.make_decision(context), timeout=15.0)
+                    print(f"  ✅ AI决策完成!")
+                except asyncio.TimeoutError:
+                    print(f"  ⏰ AI思考超时，使用简化策略...")
+                    action = None
+                except Exception as e:
+                    print(f"  ❌ AI决策出现异常: {str(e)[:50]}...")
+                    action = None
 
                 # 根据难度添加随机错误
                 if random.random() < difficulty_config["error_rate"]:
@@ -763,35 +861,113 @@ async def run_human_vs_ai(args):
                     action = None
 
                 if action:
-                    print(f"🤖 {profile.name} 决策: {action.action_type.value}")
+                    # 详细分析AI决策原因
+                    decision_reason = ""
+                    confidence_info = ""
                     if hasattr(action, 'reasoning') and action.reasoning:
-                        print(f"💭 AI推理: {action.reasoning[:100]}...")
+                        decision_reason = f"\n  🧠 思考过程: {action.reasoning[:100]}..."
+                    if hasattr(action, 'confidence'):
+                        confidence_info = f" (置信度: {action.confidence:.2f})"
+
+                    print(f"\n🤖 {profile.name} 最终决策: {action.action_type.value}{confidence_info}{decision_reason}")
 
                     # 执行AI动作
                     if action.action_type.value in ["play_minion", "play_card"]:
                         ai_hand = current.hand
                         playable_cards = [i for i, card in enumerate(ai_hand) if current.can_play_card(card)]
+
                         if playable_cards:
-                            card_idx = random.choice(playable_cards)
+                            # 智能选择卡牌而不是随机选择
+                            if hasattr(action, 'parameters') and action.parameters:
+                                # 尝试使用AI推荐的卡牌
+                                target_card = action.parameters.get('card_index')
+                                if target_card is not None and target_card in playable_cards:
+                                    card_idx = target_card
+                                else:
+                                    card_idx = playable_cards[0]  # 选择第一张可出的牌
+                            else:
+                                card_idx = playable_cards[0]  # 选择第一张可出的牌
+
+                            card = ai_hand[card_idx]
                             result = game.play_card(1, card_idx)
-                            print(f"  AI {result['message']}")
+                            # 使用安全的卡牌属性访问
+                            card_name = get_card_name(card)
+                            card_attack = get_card_attack(card)
+                            card_health = get_card_health(card)
+                            print(f"  ✅ AI打出: {card_name} ({card_attack}/{card_health}) - {result['message']}")
+                        else:
+                            print(f"  ❌ AI想出牌，但没有可出的牌")
 
                     elif action.action_type.value == "use_spell":
                         ai_hand = current.hand
                         spell_cards = [i for i, card in enumerate(ai_hand)
-                                     if card.card_type == "spell" and current.can_play_card(card)]
+                                     if get_card_type(card) == "spell" and current.can_play_card(card)]
                         if spell_cards:
-                            card_idx = random.choice(spell_cards)
+                            # 智能选择法术牌
+                            if hasattr(action, 'parameters') and action.parameters:
+                                target_spell = action.parameters.get('card_index')
+                                if target_spell is not None and target_spell in spell_cards:
+                                    card_idx = target_spell
+                                else:
+                                    card_idx = spell_cards[0]
+                            else:
+                                card_idx = spell_cards[0]
+
+                            card = ai_hand[card_idx]
                             result = game.play_card(1, card_idx)
-                            print(f"  AI {result['message']}")
+                            # 使用安全的卡牌属性访问
+                            card_name = get_card_name(card)
+                            card_attack = get_card_attack(card)
+                            effect = "造成伤害" if card_attack > 0 else "治疗" if card_attack < 0 else "特殊效果"
+                            print(f"  ✅ AI使用法术: {card_name} ({effect}) - {result['message']}")
+                        else:
+                            print(f"  ❌ AI想使用法术，但没有可用的法术")
 
                     elif action.action_type.value == "use_hero_power":
                         result = game.use_hero_power(1)
                         if result["success"]:
-                            print(f"  AI {result['message']}")
+                            print(f"  ✅ AI使用英雄技能 - {result['message']}")
+                        else:
+                            print(f"  ❌ AI想使用英雄技能，但法力不足")
+
+                    elif action.action_type.value == "end_turn":
+                        # 详细分析AI为什么结束回合
+                        ai_hand = current.hand
+                        playable_cards = [i for i, card in enumerate(ai_hand) if current.can_play_card(card)]
+                        if playable_cards:
+                            print(f"  🤔 AI策略性结束回合，可出牌 {len(playable_cards)} 张:")
+                            for i in playable_cards[:3]:  # 显示前3张可出的牌
+                                card = ai_hand[i]
+                                card_name = get_card_name(card)
+                                card_cost = safe_get_card_attr(card, 'cost', 0)
+                                print(f"    - {card_name} ({card_cost}费)")
+                            if len(playable_cards) > 3:
+                                print(f"    ... 还有 {len(playable_cards) - 3} 张其他牌")
+                            print(f"    💭 策略考虑: 保留资源等待更好时机")
+                        else:
+                            print(f"  😔 AI没有可出的牌，被迫结束回合")
+                    else:
+                        print(f"  ❓ AI选择了未知动作: {action.action_type.value}")
 
                 else:
-                    print("🤖 AI无法做出决策，跳过回合")
+                    print("\n🤖 AI无法做出决策，使用默认策略")
+                    # 显示AI手牌情况
+                    ai_hand = current.hand
+                    playable_cards = [i for i, card in enumerate(ai_hand) if current.can_play_card(card)]
+                    print(f"  📋 AI当前手牌: {len(ai_hand)}张，可出: {len(playable_cards)}张")
+
+                    if playable_cards:
+                        print(f"  🎯 自动选择最优卡牌...")
+                        # 选择最优卡牌（简单策略：选择费用最高的）
+                        best_card_idx = max(playable_cards, key=lambda i: safe_get_card_attr(ai_hand[i], 'cost', 0))
+                        card = ai_hand[best_card_idx]
+                        result = game.play_card(1, best_card_idx)
+                        card_name = get_card_name(card)
+                        card_attack = get_card_attack(card)
+                        card_health = get_card_health(card)
+                        print(f"  ✅ 自动打出: {card_name} ({card_attack}/{card_health}) - {result['message']}")
+                    else:
+                        print(f"  ⏭️ 无牌可出，跳过回合")
 
                 # AI结束回合
                 await asyncio.sleep(0.5)
@@ -943,7 +1119,7 @@ async def run_interactive_mode(args):
                 player_max_health=ai_state["max_health"],
                 player_mana=ai_state["mana"],
                 player_max_mana=ai_state["max_mana"],
-                player_hand=[],
+                player_hand=ai_state.get("hand", []),  # 修复：传递实际的手牌数据
                 player_field=ai_state["field"],
                 player_deck_size=0,  # 简化，不考虑AI的牌库
 
@@ -960,37 +1136,70 @@ async def run_interactive_mode(args):
             action = await ai_agent.make_decision(context)
 
             if action:
-                print(f"🤖 {profile.name} 决策: {action.action_type.value}")
+                # 分析AI决策原因
+                decision_reason = ""
                 if hasattr(action, 'reasoning') and action.reasoning:
-                    print(f"💭 AI推理: {action.reasoning[:100]}...")
+                    decision_reason = f" - {action.reasoning[:80]}..."
+
+                print(f"🤖 {profile.name} 决策: {action.action_type.value}{decision_reason}")
 
                 # 执行AI动作
                 if action.action_type.value in ["play_minion", "play_card"]:
-                    # AI打出一张牌（简化：随机选择可出的牌）
                     ai_hand = current.hand
                     playable_cards = [i for i, card in enumerate(ai_hand) if current.can_play_card(card)]
+
                     if playable_cards:
                         card_idx = random.choice(playable_cards)
+                        card = ai_hand[card_idx]
                         result = game.play_card(1, card_idx)
-                        print(f"  AI {result['message']}")
+                        # 使用安全的卡牌属性访问
+                        card_name = get_card_name(card)
+                        card_attack = get_card_attack(card)
+                        card_health = get_card_health(card)
+                        print(f"  ✅ AI打出: {card_name} ({card_attack}/{card_health}) - {result['message']}")
+                    else:
+                        print(f"  ❌ AI想出牌，但没有可出的牌")
 
                 elif action.action_type.value == "use_spell":
-                    # AI使用法术（简化：使用第一个可用的法术）
                     ai_hand = current.hand
                     spell_cards = [i for i, card in enumerate(ai_hand)
-                                 if card.card_type == "spell" and current.can_play_card(card)]
+                                 if get_card_type(card) == "spell" and current.can_play_card(card)]
                     if spell_cards:
                         card_idx = random.choice(spell_cards)
+                        card = ai_hand[card_idx]
                         result = game.play_card(1, card_idx)
-                        print(f"  AI {result['message']}")
+                        # 使用安全的卡牌属性访问
+                        card_name = get_card_name(card)
+                        card_attack = get_card_attack(card)
+                        effect = "造成伤害" if card_attack > 0 else "治疗" if card_attack < 0 else "特殊效果"
+                        print(f"  ✅ AI使用法术: {card_name} ({effect}) - {result['message']}")
+                    else:
+                        print(f"  ❌ AI想使用法术，但没有可用的法术")
 
                 elif action.action_type.value == "use_hero_power":
                     result = game.use_hero_power(1)
                     if result["success"]:
-                        print(f"  AI {result['message']}")
+                        print(f"  ✅ AI使用英雄技能 - {result['message']}")
+                    else:
+                        print(f"  ❌ AI想使用英雄技能，但法力不足")
+
+                elif action.action_type.value == "end_turn":
+                    # 分析AI为什么结束回合
+                    ai_hand = current.hand
+                    playable_cards = [i for i, card in enumerate(ai_hand) if current.can_play_card(card)]
+                    if playable_cards:
+                        print(f"  🤔 AI选择结束回合，虽然有 {len(playable_cards)} 张可出的牌")
+                    else:
+                        print(f"  😔 AI没有可出的牌，选择结束回合")
+                else:
+                    print(f"  ❓ AI选择了未知动作: {action.action_type.value}")
 
             else:
                 print("🤖 AI无法做出决策，跳过回合")
+                # 显示AI手牌情况
+                ai_hand = current.hand
+                playable_cards = [i for i, card in enumerate(ai_hand) if current.can_play_card(card)]
+                print(f"  📋 AI当前手牌: {len(ai_hand)}张，可出: {len(playable_cards)}张")
 
             # AI结束回合
             await asyncio.sleep(0.5)
@@ -1020,96 +1229,121 @@ async def run_benchmark(args):
     config = AIEngineConfig(enable_monitoring=True)
     engine = AIEngine(config)
 
-    # 测试不同策略的性能
-    strategies = ["rule_based", "hybrid"]
+    # 用于存储需要清理的资源
+    llm_manager = None
+    deepseek_client = None
 
-    for strategy in strategies:
-        logger.info(f"\n📊 测试策略: {strategy}")
+    try:
+        # 测试不同策略的性能
+        strategies = ["rule_based", "hybrid"]
 
-        if strategy == "hybrid":
-            hybrid_config = {
-                "strategies": [
-                    {"name": "rule_based", "weight": 0.6, "min_confidence": 0.3},
-                    {"name": "llm_enhanced", "weight": 0.4, "min_confidence": 0.5}
-                ]
-            }
-            from ai_engine.strategies.hybrid import HybridAIStrategy
-            hybrid_strategy = HybridAIStrategy("benchmark_hybrid", hybrid_config)
+        for strategy in strategies:
+            logger.info(f"\n📊 测试策略: {strategy}")
 
-            # 尝试配置LLM管理器
+            if strategy == "hybrid":
+                hybrid_config = {
+                    "strategies": [
+                        {"name": "rule_based", "weight": 0.6, "min_confidence": 0.3},
+                        {"name": "llm_enhanced", "weight": 0.4, "min_confidence": 0.5}
+                    ]
+                }
+                from ai_engine.strategies.hybrid import HybridAIStrategy
+                hybrid_strategy = HybridAIStrategy("benchmark_hybrid", hybrid_config)
+
+                # 尝试配置LLM管理器
+                try:
+                    from ai_engine.llm_integration.base import LLMManager
+                    from ai_engine.llm_integration.deepseek_client import DeepSeekClient
+                    from config.settings import get_settings
+
+                    settings = get_settings()
+                    if settings.ai.enable_llm and settings.ai.deepseek_api_key:
+                        llm_manager = LLMManager()
+                        deepseek_client = DeepSeekClient(settings.ai.deepseek_api_key)
+                        llm_manager.register_client("deepseek", deepseek_client, is_default=True)
+                        hybrid_strategy.set_llm_manager(llm_manager)
+                        logger.info("✅ Benchmark混合策略已配置LLM功能")
+                    else:
+                        logger.info("ℹ️ Benchmark混合策略未配置LLM，仅使用规则部分")
+                except Exception as e:
+                    logger.info(f"ℹ️ Benchmark LLM配置失败: {e}，仅使用规则部分")
+
+                engine.register_strategy("hybrid", hybrid_strategy)
+
+            engine.set_strategy(strategy)
+
+            # 创建测试上下文
+            context = GameContext(
+                game_id="benchmark",
+                current_player=0,
+                turn_number=5,
+                phase="main",
+
+                player_health=25,
+                player_max_health=30,
+                player_mana=6,
+                player_max_mana=6,
+                player_hand=ai_state.get("hand", []),
+                player_field=[],
+                player_deck_size=15,
+
+                opponent_health=20,
+                opponent_max_health=30,
+                opponent_mana=4,
+                opponent_max_mana=4,
+                opponent_field=[],
+                opponent_hand_size=4,
+                opponent_deck_size=17
+            )
+
+            # 执行多次测试
+            test_count = 10
+            total_time = 0
+            success_count = 0
+
+            for i in range(test_count):
+                start_time = asyncio.get_event_loop().time()
+                action = await engine.make_decision(context)
+                end_time = asyncio.get_event_loop().time()
+
+                if action:
+                    success_count += 1
+                    total_time += end_time - start_time
+
+            # 计算统计结果
+            avg_time = total_time / max(1, success_count)
+            success_rate = success_count / test_count
+
+            logger.info(f"  成功率: {success_rate:.2f}")
+            logger.info(f"  平均响应时间: {avg_time:.3f}秒")
+            logger.info(f"  总测试次数: {test_count}")
+
+            # 获取详细统计
+            if strategy in ["rule_based", "hybrid"]:
+                stats = engine.get_strategy_performance(strategy)
+                if stats:
+                    logger.info(f"  引擎统计: 成功率 {stats['success_rate']:.2f}, "
+                              f"平均时间 {stats['average_decision_time']:.3f}s")
+
+    finally:
+        # 清理资源
+        if deepseek_client:
             try:
-                from ai_engine.llm_integration.base import LLMManager
-                from ai_engine.llm_integration.deepseek_client import DeepSeekClient
-                from config.settings import get_settings
-
-                settings = get_settings()
-                if settings.ai.enable_llm and settings.ai.deepseek_api_key:
-                    llm_manager = LLMManager()
-                    deepseek_client = DeepSeekClient(settings.ai.deepseek_api_key)
-                    llm_manager.register_client("deepseek", deepseek_client, is_default=True)
-                    hybrid_strategy.set_llm_manager(llm_manager)
-                    logger.info("✅ Benchmark混合策略已配置LLM功能")
-                else:
-                    logger.info("ℹ️ Benchmark混合策略未配置LLM，仅使用规则部分")
+                await deepseek_client.close()
+                logger.info("✅ Benchmark DeepSeek客户端已关闭")
             except Exception as e:
-                logger.info(f"ℹ️ Benchmark LLM配置失败: {e}，仅使用规则部分")
+                logger.warning(f"⚠️ 关闭DeepSeek客户端时出错: {e}")
 
-            engine.register_strategy("hybrid", hybrid_strategy)
-
-        engine.set_strategy(strategy)
-
-        # 创建测试上下文
-        context = GameContext(
-            game_id="benchmark",
-            current_player=0,
-            turn_number=5,
-            phase="main",
-
-            player_health=25,
-            player_max_health=30,
-            player_mana=6,
-            player_max_mana=6,
-            player_hand=[],
-            player_field=[],
-            player_deck_size=15,
-
-            opponent_health=20,
-            opponent_max_health=30,
-            opponent_mana=4,
-            opponent_max_mana=4,
-            opponent_field=[],
-            opponent_hand_size=4,
-            opponent_deck_size=17
-        )
-
-        # 执行多次测试
-        test_count = 10
-        total_time = 0
-        success_count = 0
-
-        for i in range(test_count):
-            start_time = asyncio.get_event_loop().time()
-            action = await engine.make_decision(context)
-            end_time = asyncio.get_event_loop().time()
-
-            if action:
-                success_count += 1
-                total_time += end_time - start_time
-
-        # 计算统计结果
-        avg_time = total_time / max(1, success_count)
-        success_rate = success_count / test_count
-
-        logger.info(f"  成功率: {success_rate:.2f}")
-        logger.info(f"  平均响应时间: {avg_time:.3f}秒")
-        logger.info(f"  总测试次数: {test_count}")
-
-        # 获取详细统计
-        if strategy in ["rule_based", "hybrid"]:
-            stats = engine.get_strategy_performance(strategy)
-            if stats:
-                logger.info(f"  引擎统计: 成功率 {stats['success_rate']:.2f}, "
-                          f"平均时间 {stats['average_decision_time']:.3f}s")
+        if llm_manager:
+            try:
+                # 清理LLM管理器中的会话
+                if hasattr(llm_manager, 'clients'):
+                    for client in llm_manager.clients.values():
+                        if hasattr(client, 'close'):
+                            await client.close()
+                logger.info("✅ Benchmark LLM管理器已清理")
+            except Exception as e:
+                logger.warning(f"⚠️ 清理LLM管理器时出错: {e}")
 
 
 async def run_demo_command(args):
@@ -1256,16 +1490,11 @@ async def run_menu_human_vs_ai(choice: dict, ui: GameUI):
                     if user_input_lower in ['退出', 'quit', 'exit', 'q']:
                         return
 
-                    # 帮助
-                    elif user_input_lower in ['帮助', '帮', 'help']:
-                        ui.console.print("\n📖 [bold cyan]游戏帮助:[/bold cyan]")
-                        ui.console.print("• [yellow]直接输入数字[/yellow] 出牌 (如: 0)")
-                        ui.console.print("• [yellow]技/技能[/yellow] 使用英雄技能")
-                        ui.console.print("• [yellow]回车/空格[/yellow] 结束回合 (自动攻击)")
-                        ui.console.print("• [yellow]随从攻击 <编号> <目标>[/yellow] 手动攻击")
-                        ui.console.print("• [yellow]英雄攻击[/yellow] 英雄直接攻击")
-                        ui.console.print("• [yellow]状态[/yellow] 查看游戏状态")
-                        ui.console.print("• [yellow]退出[/yellow] 退出游戏")
+                    # 帮助 - 使用智能上下文帮助
+                    elif user_input_lower in ['帮助', '帮', 'help', 'h']:
+                        # 使用游戏提供的上下文帮助
+                        context_help = game.get_context_help()
+                        ui.console.print(context_help)
                         continue
 
                     # 查看状态
@@ -1333,7 +1562,7 @@ async def run_menu_human_vs_ai(choice: dict, ui: GameUI):
                                 if getattr(minion, 'can_attack', False):
                                     targets = game.get_minion_attack_targets(0, i)
                                     if targets:
-                                        attackable.append(f"随从{i}: {minion.name} -> {', '.join(targets)}")
+                                        attackable.append(f"随从{i}: {get_card_name(minion)} -> {', '.join(targets)}")
 
                             if attackable:
                                 ui.console.print("📋 [yellow]可攻击的随从:[/yellow]", style="yellow")
@@ -1385,7 +1614,7 @@ async def run_menu_human_vs_ai(choice: dict, ui: GameUI):
                     player_max_health=ai_state["max_health"],
                     player_mana=ai_state["mana"],
                     player_max_mana=ai_state["max_mana"],
-                    player_hand=[],
+                    player_hand=ai_state.get("hand", []),
                     player_field=ai_state["field"],
                     player_deck_size=0,
 
@@ -1407,16 +1636,29 @@ async def run_menu_human_vs_ai(choice: dict, ui: GameUI):
                     action = None
 
                 if action:
-                    ui.console.print(f"🤖 {profile.name} 决策: {action.action_type.value}", style="cyan")
+                    # 分析AI决策原因
+                    decision_reason = ""
+                    if hasattr(action, 'reasoning') and action.reasoning:
+                        decision_reason = f" - {action.reasoning[:80]}..."
+
+                    ui.console.print(f"🤖 {profile.name} 决策: {action.action_type.value}{decision_reason}", style="cyan")
 
                     # 执行AI动作
                     if action.action_type.value in ["play_minion", "play_card"]:
                         ai_hand = current_player.hand
                         playable_cards = [i for i, card in enumerate(ai_hand) if current_player.can_play_card(card)]
+
                         if playable_cards:
                             card_idx = random.choice(playable_cards)
+                            card = ai_hand[card_idx]
                             result = game.play_card(1, card_idx)
-                            ui.console.print(f"  AI {result['message']}", style="green")
+                            # 使用安全的卡牌属性访问
+                            card_name = get_card_name(card)
+                            card_attack = get_card_attack(card)
+                            card_health = get_card_health(card)
+                            ui.console.print(f"  ✅ AI打出: {card_name} ({card_attack}/{card_health}) - {result['message']}", style="green")
+                        else:
+                            ui.console.print("  ❌ AI想出牌，但没有可出的牌", style="red")
 
                     elif action.action_type.value == "use_spell":
                         ai_hand = current_player.hand
@@ -1424,16 +1666,40 @@ async def run_menu_human_vs_ai(choice: dict, ui: GameUI):
                                      if card.card_type == "spell" and current_player.can_play_card(card)]
                         if spell_cards:
                             card_idx = random.choice(spell_cards)
+                            card = ai_hand[card_idx]
                             result = game.play_card(1, card_idx)
-                            ui.console.print(f"  AI {result['message']}", style="green")
+                            # 使用安全的卡牌属性访问
+                            card_name = get_card_name(card)
+                            card_attack = get_card_attack(card)
+                            effect = "造成伤害" if card_attack > 0 else "治疗" if card_attack < 0 else "特殊效果"
+                            ui.console.print(f"  ✅ AI使用法术: {card_name} ({effect}) - {result['message']}", style="green")
+                        else:
+                            ui.console.print("  ❌ AI想使用法术，但没有可用的法术", style="red")
 
                     elif action.action_type.value == "use_hero_power":
                         result = game.use_hero_power(1)
                         if result["success"]:
-                            ui.console.print(f"  AI {result['message']}", style="green")
+                            ui.console.print(f"  ✅ AI使用英雄技能 - {result['message']}", style="green")
+                        else:
+                            ui.console.print("  ❌ AI想使用英雄技能，但法力不足", style="red")
+
+                    elif action.action_type.value == "end_turn":
+                        # 分析AI为什么结束回合
+                        ai_hand = current_player.hand
+                        playable_cards = [i for i, card in enumerate(ai_hand) if current_player.can_play_card(card)]
+                        if playable_cards:
+                            ui.console.print(f"  🤔 AI选择结束回合，虽然有 {len(playable_cards)} 张可出的牌", style="yellow")
+                        else:
+                            ui.console.print("  😔 AI没有可出的牌，选择结束回合", style="dim")
+                    else:
+                        ui.console.print(f"  ❓ AI选择了未知动作: {action.action_type.value}", style="red")
 
                 else:
                     ui.console.print("🤖 AI无法做出决策，跳过回合", style="yellow")
+                    # 显示AI手牌情况
+                    ai_hand = current_player.hand
+                    playable_cards = [i for i, card in enumerate(ai_hand) if current_player.can_play_card(card)]
+                    ui.console.print(f"  📋 AI当前手牌: {len(ai_hand)}张，可出: {len(playable_cards)}张", style="dim")
 
                 # AI结束回合
                 await asyncio.sleep(0.5)
@@ -1484,14 +1750,641 @@ async def run_menu_human_vs_ai(choice: dict, ui: GameUI):
 
 async def run_menu_ai_vs_ai(choice: dict, ui: GameUI):
     """菜单模式下的AI对战"""
-    ui.console.print("🤖 AI对战模式开发中...", style="yellow")
-    await asyncio.sleep(2)
+    games = choice.get("games", 3)
+
+    ui.console.print(Panel(
+        f"[bold cyan]🤖 AI对战模式[/bold cyan]\n"
+        f"[dim]观看智能AI之间的精彩对决！[/dim]\n"
+        f"[blue]对战场次: {games}[/blue]",
+        box=box.DOUBLE,
+        border_style="cyan"
+    ))
+
+    # 创建AI代理
+    personality_manager = PersonalityManager()
+
+    # 获取两个人格
+    profile1 = personality_manager.get_profile("adaptive_learner")
+    profile2 = personality_manager.get_random_profile()
+
+    # 创建AI策略
+    from ai_engine.strategies.rule_based import RuleBasedStrategy
+    from ai_engine.strategies.hybrid import HybridAIStrategy
+
+    hybrid_config = {
+        "strategies": [
+            {"name": "rule_based", "weight": 0.7, "min_confidence": 0.3},
+            {"name": "llm_enhanced", "weight": 0.3, "min_confidence": 0.5}
+        ]
+    }
+
+    strategy1 = HybridAIStrategy("AI玩家1", hybrid_config)
+    strategy2 = RuleBasedStrategy("AI玩家2")  # 简化，使用规则AI避免超时问题
+
+    # 尝试配置LLM
+    try:
+        from ai_engine.llm_integration.base import LLMManager
+        from ai_engine.llm_integration.deepseek_client import DeepSeekClient
+        from config.settings import get_settings
+
+        settings = get_settings()
+        if settings.ai.enable_llm and settings.ai.deepseek_api_key:
+            llm_manager = LLMManager()
+            deepseek_client = DeepSeekClient(settings.ai.deepseek_api_key)
+            llm_manager.register_client("deepseek", deepseek_client, is_default=True)
+            strategy1.set_llm_manager(llm_manager)
+    except Exception:
+        pass
+
+    # 创建AI代理
+    agent1 = AIAgent("ai_player_1", profile1, strategy1)
+    agent2 = AIAgent("ai_player_2", profile2, strategy2)
+
+    ui.console.print(f"\n🎮 [bold green]对战选手[/bold green]:")
+    ui.console.print(f"  🔵 {profile1.name} (混合AI)")
+    ui.console.print(f"  🟠 {profile2.name} (规则AI)")
+
+    # 运行多场对战
+    player1_wins = 0
+    player2_wins = 0
+    draws = 0
+
+    for game_num in range(1, games + 1):
+        ui.console.print(f"\n{'='*60}")
+        ui.console.print(Panel(
+            f"[bold yellow]第 {game_num} 场对战开始[/bold yellow]",
+            box=box.ROUNDED,
+            border_style="yellow"
+        ))
+
+        # 模拟游戏
+        winner = await simulate_ai_vs_ai_game(agent1, agent2, game_num, ui)
+
+        if winner == 1:
+            player1_wins += 1
+            ui.console.print(f"🏆 [green]{profile1.name} 获胜！[/green]")
+        elif winner == 2:
+            player2_wins += 1
+            ui.console.print(f"🏆 [green]{profile2.name} 获胜！[/green]")
+        else:
+            draws += 1
+            ui.console.print(f"🤝 [yellow]平局！[/yellow]")
+
+        if game_num < games:
+            ui.console.print("\n⏳ 准备下一场对战...")
+            await asyncio.sleep(2)
+
+    # 显示最终统计
+    ui.console.print(f"\n{'='*60}")
+    ui.console.print(Panel(
+        f"[bold magenta]🏆 对战统计[/bold magenta]\n\n"
+        f"🔵 {profile1.name}: {player1_wins} 胜\n"
+        f"🟠 {profile2.name}: {player2_wins} 胜\n"
+        f"🤝 平局: {draws} 场\n\n"
+        f"[bold]总胜率:[/bold] {profile1.name} {player1_wins/games*100:.1f}% vs {profile2.name} {player2_wins/games*100:.1f}%",
+        box=box.DOUBLE,
+        border_style="magenta"
+    ))
+
+
+async def simulate_ai_vs_ai_game(agent1: AIAgent, agent2: AIAgent, game_num: int, ui: GameUI) -> int:
+    """模拟AI对战游戏"""
+    import random
+
+    # 初始化游戏状态
+    player_health = [30, 30]
+    player_mana = [1, 1]
+    player_max_mana = [1, 1]
+    player_field = [[], []]
+    player_hand = [[], []]
+    player_deck_size = [20, 20]
+
+    # 创建卡牌池
+    def create_card(name, cost, attack, health, card_type="minion", mechanics=None):
+        return {
+            "name": name,
+            "cost": cost,
+            "attack": attack,
+            "health": health,
+            "card_type": card_type,
+            "mechanics": mechanics or [],
+            "instance_id": f"card_{random.randint(1000, 9999)}"
+        }
+
+    card_pool = [
+        create_card("烈焰元素", 3, 5, 3, "minion", []),
+        create_card("霜狼步兵", 2, 2, 3, "minion", ["taunt"]),
+        create_card("铁喙猫头鹰", 3, 2, 2, "minion", ["taunt"]),
+        create_card("狼人渗透者", 2, 3, 2, "minion", ["stealth"]),
+        create_card("石像鬼", 1, 1, 1, "minion", ["divine_shield"]),
+        create_card("火球术", 4, 6, 0, "spell", []),
+        create_card("闪电箭", 1, 3, 0, "spell", []),
+        create_card("治愈术", 2, -5, 0, "spell", []),
+        create_card("狂野之怒", 1, 3, 0, "spell", []),
+        create_card("奥术智慧", 3, 0, 0, "spell", ["draw_cards"]),
+    ]
+
+    # 初始手牌
+    for player_idx in range(2):
+        for _ in range(3):
+            if player_deck_size[player_idx] > 0:
+                card = random.choice(card_pool).copy()
+                player_hand[player_idx].append(card)
+                player_deck_size[player_idx] -= 1
+
+    # 游戏主循环
+    current_player = 0
+    turn_number = 1
+    max_turns = 8  # 限制回合数，避免游戏过长
+
+    while turn_number <= max_turns and player_health[0] > 0 and player_health[1] > 0:
+        # 显示回合信息
+        current_agent = agent1 if current_player == 0 else agent2
+        opponent_agent = agent2 if current_player == 0 else agent1
+
+        ui.console.print(f"\n[bold blue]回合 {turn_number} - {current_agent.personality.name} 回合[/bold blue]")
+
+        # 回合开始
+        if player_max_mana[current_player] < 10:
+            player_max_mana[current_player] += 1
+        player_mana[current_player] = player_max_mana[current_player]
+
+        # 抽牌
+        if player_deck_size[current_player] > 0 and len(player_hand[current_player]) < 10:
+            card = random.choice(card_pool).copy()
+            player_hand[current_player].append(card)
+            player_deck_size[current_player] -= 1
+            ui.console.print(f"🃏 {current_agent.personality.name} 抽取了 {card['name']}")
+
+        # 显示状态摘要
+        ui.console.print(f"💰 法力: {player_mana[current_player]}/{player_max_mana[current_player]} | "
+                         f"❤️ 生命: {player_health[0]} vs {player_health[1]} | "
+                         f"⚔️ 场面: {len(player_field[0])} vs {len(player_field[1])} 随从")
+
+        # 创建游戏上下文
+        opponent_idx = 1 - current_player
+        context = GameContext(
+            game_id=f"ai_vs_ai_game_{game_num}_turn_{turn_number}",
+            current_player=current_player,
+            turn_number=turn_number,
+            phase="main",
+
+            player_health=player_health[current_player],
+            player_max_health=30,
+            player_mana=player_mana[current_player],
+            player_max_mana=player_max_mana[current_player],
+            player_hand=player_hand[current_player],
+            player_field=player_field[current_player],
+            player_deck_size=player_deck_size[current_player],
+
+            opponent_health=player_health[opponent_idx],
+            opponent_max_health=30,
+            opponent_mana=player_mana[opponent_idx],
+            opponent_max_mana=player_max_mana[opponent_idx],
+            opponent_field=player_field[opponent_idx],
+            opponent_hand_size=len(player_hand[opponent_idx]),
+            opponent_deck_size=player_deck_size[opponent_idx]
+        )
+
+        # AI决策
+        ui.console.print(f"🤖 {current_agent.personality.name} 正在思考...")
+
+        try:
+            # 为AI对战模式设置更长的超时时间
+            action = await asyncio.wait_for(current_agent.make_decision(context), timeout=30.0)
+        except asyncio.TimeoutError:
+            ui.console.print(f"⏰ {current_agent.personality.name} 思考超时，跳过回合")
+            action = None
+
+        if action:
+            ui.console.print(f"💭 {current_agent.personality.name} 决策: {action.action_type.value}")
+
+            # 执行AI动作
+            await execute_ai_action(action, current_player, player_health, player_mana,
+                                  player_hand, player_field, current_agent.personality.name, ui)
+
+            # 战斗阶段
+            if player_field[current_player]:
+                await ai_combat_phase(current_player, player_health, player_field, ui)
+        else:
+            ui.console.print(f"😔 {current_agent.personality.name} 无法做出决策")
+
+        current_player = 1 - current_player
+        if current_player == 0:
+            turn_number += 1
+
+        await asyncio.sleep(1)  # 短暂暂停让用户看清过程
+
+    # 判断胜负
+    if player_health[0] <= 0 and player_health[1] <= 0:
+        return 0  # 平局
+    elif player_health[0] > 0 and player_health[1] <= 0:
+        return 1  # 玩家1胜
+    elif player_health[1] > 0 and player_health[0] <= 0:
+        return 2  # 玩家2胜
+    else:
+        # 超过回合数，比较血量
+        if player_health[0] > player_health[1]:
+            return 1
+        elif player_health[1] > player_health[0]:
+            return 2
+        else:
+            return 0
+
+
+async def execute_ai_action(action, player_idx, player_health, player_mana,
+                           player_hand, player_field, player_name, ui: GameUI):
+    """执行AI选择的动作"""
+    import random
+
+    if action.action_type.value in ["play_minion", "play_card"] and player_mana[player_idx] >= 2:
+        # 优先出随从
+        affordable_cards = [card for card in player_hand[player_idx]
+                           if card["card_type"] == "minion" and card["cost"] <= player_mana[player_idx]]
+        if affordable_cards:
+            card = random.choice(affordable_cards)
+            player_hand[player_idx].remove(card)
+            player_mana[player_idx] -= card["cost"]
+            player_field[player_idx].append(card)
+            ui.console.print(f"  ⚔️ {player_name} 打出 {card['name']} ({card['attack']}/{card['health']})")
+        else:
+            # 没有随从可出，尝试出法术
+            affordable_spells = [card for card in player_hand[player_idx]
+                               if card["card_type"] == "spell" and card["cost"] <= player_mana[player_idx]]
+            if affordable_spells:
+                spell = random.choice(affordable_spells)
+                player_hand[player_idx].remove(spell)
+                player_mana[player_idx] -= spell["cost"]
+
+                opponent_idx = 1 - player_idx
+                if spell["attack"] < 0:  # 治疗法术
+                    player_health[player_idx] = min(30, player_health[player_idx] - spell["attack"])
+                    ui.console.print(f"  💚 {player_name} 使用 {spell['name']} 治疗 {-spell['attack']} 点生命")
+                else:  # 伤害法术
+                    player_health[opponent_idx] -= spell["attack"]
+                    ui.console.print(f"  🔥 {player_name} 使用 {spell['name']} 造成 {spell['attack']} 点伤害")
+
+    elif action.action_type.value == "use_spell" and player_mana[player_idx] >= 2:
+        affordable_spells = [card for card in player_hand[player_idx]
+                            if card["card_type"] == "spell" and card["cost"] <= player_mana[player_idx]]
+        if affordable_spells:
+            spell = random.choice(affordable_spells)
+            player_hand[player_idx].remove(spell)
+            player_mana[player_idx] -= spell["cost"]
+
+            opponent_idx = 1 - player_idx
+            if spell["attack"] < 0:  # 治疗法术
+                player_health[player_idx] = min(30, player_health[player_idx] - spell["attack"])
+                ui.console.print(f"  💚 {player_name} 使用 {spell['name']} 治疗 {-spell['attack']} 点生命")
+            else:  # 伤害法术
+                player_health[opponent_idx] -= spell["attack"]
+                ui.console.print(f"  🔥 {player_name} 使用 {spell['name']} 造成 {spell['attack']} 点伤害")
+
+    elif action.action_type.value == "use_hero_power" and player_mana[player_idx] >= 2:
+        player_mana[player_idx] -= 2
+        opponent_idx = 1 - player_idx
+        damage = 2
+        player_health[opponent_idx] -= damage
+        ui.console.print(f"  ⚡ {player_name} 使用英雄技能，造成 {damage} 点伤害")
+
+
+async def ai_combat_phase(current_player, player_health, player_field, ui: GameUI):
+    """AI战斗阶段"""
+    opponent_idx = 1 - current_player
+
+    # 如果对方没有随从，直接攻击英雄
+    if not player_field[opponent_idx] and player_field[current_player]:
+        for minion in player_field[current_player]:
+            if random.random() > 0.3:  # 70%概率攻击
+                player_health[opponent_idx] -= minion["attack"]
+                ui.console.print(f"  ⚔️ {minion['name']} 攻击英雄，造成 {minion['attack']} 点伤害")
+
+    # 随从对战（简化版）
+    elif player_field[current_player] and player_field[opponent_idx]:
+        attacker = random.choice(player_field[current_player])
+        defender = random.choice(player_field[opponent_idx])
+
+        # 互相攻击
+        defender["health"] -= attacker["attack"]
+        ui.console.print(f"  ⚔️ {attacker['name']} vs {defender['name']} ({attacker['attack']} vs {defender['health']})")
+
+        # 移除死亡的随从
+        if defender["health"] <= 0:
+            player_field[opponent_idx].remove(defender)
+            ui.console.print(f"  💀 {defender['name']} 被击败")
 
 
 async def run_menu_interactive(choice: dict, ui: GameUI):
     """菜单模式下的交互模式"""
-    ui.console.print("🎯 交互模式开发中...", style="yellow")
-    await asyncio.sleep(2)
+    ui.console.print(Panel(
+        f"[bold cyan]🎯 交互模式[/bold cyan]\n"
+        f"[dim]自由探索游戏功能，无压力游戏！[/dim]",
+        box=box.DOUBLE,
+        border_style="cyan"
+    ))
+
+    # 创建AI对手
+    personality_manager = PersonalityManager()
+    profile = personality_manager.get_profile("adaptive_learner")
+
+    # 创建简单的规则AI
+    from ai_engine.strategies.rule_based import RuleBasedStrategy
+    strategy = RuleBasedStrategy("AI对手")
+    ai_agent = AIAgent("ai_opponent", profile, strategy)
+
+    # 创建游戏
+    game = CardGame("玩家", profile.name)
+
+    ui.console.print(f"\n🎮 [bold green]交互模式开始！[/bold green]")
+    ui.console.print(f"你的对手是: [bold blue]{profile.name}[/bold blue]")
+    ui.console.print("=" * 50)
+
+    # 主游戏循环
+    while not game.game_over:
+        current_player = game.get_current_player()
+
+        # 如果是玩家回合
+        if current_player.name == "玩家":
+            game.display_status(use_rich=True)
+
+            # 显示可用命令
+            commands = game.get_available_commands()
+
+            # 使用Rich的Prompt获取用户输入
+            from rich.prompt import Prompt
+            try:
+                user_input = Prompt.ask(
+                    "\n[bold green]请输入操作 (数字/命令)[/bold green]",
+                    default="",
+                    show_default=False
+                ).strip()
+
+                # 空输入或空格/回车 = 结束回合
+                if not user_input or user_input in ['', ' ', '\n', '\r']:
+                    result = game.end_turn(0, auto_attack=True)
+                    ui.console.print(f"✅ {result['message']}", style="green")
+                    continue
+
+                user_input_lower = user_input.lower()
+
+                # 退出游戏
+                if user_input_lower in ['退出', 'quit', 'exit', 'q']:
+                    ui.console.print("👋 [yellow]游戏已退出[/yellow]")
+                    return
+
+                # 帮助 - 使用智能上下文帮助
+                elif user_input_lower in ['帮助', '帮', 'help', 'h']:
+                    # 使用游戏提供的上下文帮助
+                    context_help = game.get_context_help()
+                    ui.console.print(context_help)
+                    continue
+
+                # 查看状态
+                elif user_input_lower in ['状态', 'status']:
+                    game.display_status(use_rich=True)
+                    continue
+
+                # 简化出牌 - 直接输入数字
+                elif user_input.isdigit():
+                    card_idx = int(user_input)
+                    if card_idx < len(current_player.hand):
+                        result = game.quick_play_card(0, card_idx)
+                        ui.console.print(
+                            f"✅ {result['message']}" if result["success"]
+                            else f"❌ {result['message']}",
+                            style="green" if result["success"] else "red"
+                        )
+                    else:
+                        ui.console.print("❌ 无效的卡牌编号", style="red")
+                    continue
+
+                # 完整出牌命令
+                elif user_input_lower.startswith('出牌 ') or user_input_lower.startswith('play '):
+                    try:
+                        card_idx = int(user_input.split()[1])
+                        result = game.quick_play_card(0, card_idx)
+                        ui.console.print(
+                            f"✅ {result['message']}" if result["success"]
+                            else f"❌ {result['message']}",
+                            style="green" if result["success"] else "red"
+                        )
+                    except (IndexError, ValueError):
+                        ui.console.print("❌ 无效的卡牌编号，请使用 '出牌 <编号>' 格式", style="red")
+                    continue
+
+                # 英雄技能
+                elif user_input_lower in ['英雄技能', '技能', '技', 'power']:
+                    result = game.use_hero_power(0)
+                    ui.console.print(
+                        f"✅ {result['message']}" if result["success"]
+                        else f"❌ {result['message']}",
+                        style="green" if result["success"] else "red"
+                    )
+                    continue
+
+                # 随从攻击
+                elif user_input_lower.startswith('随从攻击 ') or user_input_lower.startswith('attack '):
+                    parts = user_input.split()
+                    if len(parts) >= 3:
+                        try:
+                            minion_idx = int(parts[1])
+                            target = parts[2]
+                            result = game.attack_with_minion(0, minion_idx, target)
+                            ui.console.print(
+                                f"✅ {result['message']}" if result["success"]
+                                else f"❌ {result['message']}",
+                                style="green" if result["success"] else "red"
+                            )
+                        except (IndexError, ValueError):
+                            ui.console.print("❌ 无效的随从编号", style="red")
+                    else:
+                        # 显示可攻击的随从和目标
+                        attackable = []
+                        for i, minion in enumerate(current_player.field):
+                            if getattr(minion, 'can_attack', False):
+                                targets = game.get_minion_attack_targets(0, i)
+                                if targets:
+                                    attackable.append(f"随从{i}: {get_card_name(minion)} -> {', '.join(targets)}")
+
+                        if attackable:
+                            ui.console.print("📋 [yellow]可攻击的随从:[/yellow]", style="yellow")
+                            for info in attackable:
+                                ui.console.print(f"  • {info}", style="white")
+                        else:
+                            ui.console.print("❌ 当前没有可以攻击的随从", style="red")
+                    continue
+
+                # 英雄攻击
+                elif user_input_lower in ['英雄攻击', 'hero']:
+                    result = game.attack_with_hero(0)
+                    ui.console.print(
+                        f"✅ {result['message']}" if result["success"]
+                        else f"❌ {result['message']}",
+                        style="green" if result["success"] else "red"
+                    )
+                    continue
+
+                # 手动结束回合
+                elif user_input_lower in ['结束回合', '结束', 'end']:
+                    result = game.end_turn(0, auto_attack=False)
+                    ui.console.print(f"✅ {result['message']}", style="green")
+
+                else:
+                    ui.console.print(f"❌ 未知命令: {user_input}", style="red")
+                    ui.console.print("💡 输入 '帮助' 查看可用操作", style="dim")
+
+            except KeyboardInterrupt:
+                ui.console.print("\n👋 游戏被用户中断", style="yellow")
+                return
+
+        # 如果是AI回合
+        else:
+            ui.console.print(f"\n🤖 {current_player.name} 正在思考...", style="blue")
+            await asyncio.sleep(1.5)  # 模拟思考时间
+
+            # 创建游戏上下文给AI
+            state = game.get_game_state()
+            ai_state = state["opponent_state"]
+
+            context = GameContext(
+                game_id="interactive_game",
+                current_player=1,
+                turn_number=game.turn_number,
+                phase="main",
+
+                player_health=ai_state["health"],
+                player_max_health=ai_state["max_health"],
+                player_mana=ai_state["mana"],
+                player_max_mana=ai_state["max_mana"],
+                player_hand=ai_state.get("hand", []),
+                player_field=ai_state["field"],
+                player_deck_size=0,
+
+                opponent_health=state["current_player_state"]["health"],
+                opponent_max_health=state["current_player_state"]["max_health"],
+                opponent_mana=state["current_player_state"]["mana"],
+                opponent_max_mana=state["current_player_state"]["max_mana"],
+                opponent_field=state["current_player_state"]["field"],
+                opponent_hand_size=len(state["current_player_state"]["hand"]),
+                opponent_deck_size=0
+            )
+
+            # AI决策
+            action = await ai_agent.make_decision(context)
+
+            if action:
+                # 分析AI决策原因
+                decision_reason = ""
+                if hasattr(action, 'reasoning') and action.reasoning:
+                    decision_reason = f" - {action.reasoning[:80]}..."
+
+                ui.console.print(f"🤖 {profile.name} 决策: {action.action_type.value}{decision_reason}", style="cyan")
+
+                # 执行AI动作
+                if action.action_type.value in ["play_minion", "play_card"]:
+                    ai_hand = current_player.hand
+                    playable_cards = [i for i, card in enumerate(ai_hand) if current_player.can_play_card(card)]
+
+                    if playable_cards:
+                        card_idx = random.choice(playable_cards)
+                        card = ai_hand[card_idx]
+                        result = game.play_card(1, card_idx)
+                        # 使用安全的卡牌属性访问
+                        card_name = get_card_name(card)
+                        card_attack = get_card_attack(card)
+                        card_health = get_card_health(card)
+                        ui.console.print(f"  ✅ AI打出: {card_name} ({card_attack}/{card_health}) - {result['message']}", style="green")
+                    else:
+                        ui.console.print("  ❌ AI想出牌，但没有可出的牌", style="red")
+
+                elif action.action_type.value == "use_spell":
+                    ai_hand = current_player.hand
+                    spell_cards = [i for i, card in enumerate(ai_hand)
+                                 if card.card_type == "spell" and current_player.can_play_card(card)]
+                    if spell_cards:
+                        card_idx = random.choice(spell_cards)
+                        card = ai_hand[card_idx]
+                        result = game.play_card(1, card_idx)
+                        # 使用安全的卡牌属性访问
+                        card_name = get_card_name(card)
+                        card_attack = get_card_attack(card)
+                        effect = "造成伤害" if card_attack > 0 else "治疗" if card_attack < 0 else "特殊效果"
+                        ui.console.print(f"  ✅ AI使用法术: {card_name} ({effect}) - {result['message']}", style="green")
+                    else:
+                        ui.console.print("  ❌ AI想使用法术，但没有可用的法术", style="red")
+
+                elif action.action_type.value == "use_hero_power":
+                    result = game.use_hero_power(1)
+                    if result["success"]:
+                        ui.console.print(f"  ✅ AI使用英雄技能 - {result['message']}", style="green")
+                    else:
+                        ui.console.print("  ❌ AI想使用英雄技能，但法力不足", style="red")
+
+                elif action.action_type.value == "end_turn":
+                    ai_hand = current_player.hand
+                    playable_cards = [i for i, card in enumerate(ai_hand) if current_player.can_play_card(card)]
+                    if playable_cards:
+                        ui.console.print(f"  🤔 AI选择结束回合，虽然有 {len(playable_cards)} 张可出的牌", style="yellow")
+                    else:
+                        ui.console.print("  😔 AI没有可出的牌，选择结束回合", style="dim")
+                else:
+                    ui.console.print(f"  ❓ AI选择了未知动作: {action.action_type.value}", style="red")
+
+            else:
+                ui.console.print("🤖 AI无法做出决策，跳过回合", style="yellow")
+                ai_hand = current_player.hand
+                playable_cards = [i for i, card in enumerate(ai_hand) if current_player.can_play_card(card)]
+                ui.console.print(f"  📋 AI当前手牌: {len(ai_hand)}张，可出: {len(playable_cards)}张", style="dim")
+
+            # AI结束回合
+            await asyncio.sleep(0.5)
+            result = game.end_turn(1)
+            ui.console.print(f"✅ {result['message']}", style="green")
+
+    # 游戏结束
+    if game.game_over:
+        ui.console.print(f"\n🏁 游戏结束! {game.winner}", style="bold yellow")
+        ui.console.print("=" * 50)
+
+        # 显示最终统计
+        final_state = game.get_game_state()
+        ui.console.print(f"最终生命值: 玩家 {final_state['current_player_state']['health']} vs AI {final_state['opponent_state']['health']}")
+        ui.console.print(f"总回合数: {game.turn_number}")
+
+        # 显示游戏结果
+        if game.winner == "玩家":
+            result_text = "[bold green]🎉 恭喜你赢了！[/bold green]"
+            border_style = "green"
+        elif game.winner == "平局":
+            result_text = "[bold yellow]🤝 平局！[/bold yellow]"
+            border_style = "yellow"
+        else:
+            result_text = f"[bold red]😔 {game.winner} 获胜[/bold red]"
+            border_style = "red"
+
+        ui.console.print(Panel(
+            result_text,
+            title="游戏结果",
+            box=box.DOUBLE,
+            border_style=border_style
+        ))
+
+        # AI学习
+        result = {
+            "won": game.winner == profile.name,
+            "opponent_id": "player",
+            "opponent_aggression": 0.5,
+            "final_health_diff": final_state['opponent_state']['health'] - final_state['current_player_state']['health']
+        }
+        ai_agent.learn_from_game(result)
+
+        # 询问是否再来一局
+        from rich.prompt import Confirm
+        if Confirm.ask("再来一局？", default=True):
+            # 递归调用，重新开始游戏
+            await run_menu_interactive(choice, ui)
+        else:
+            ui.console.print("👋 [blue]感谢游玩交互模式！[/blue]")
 
 
 async def run_menu_test(choice: dict, ui: GameUI):
@@ -1660,39 +2553,93 @@ async def test_strategies():
 
     config = AIEngineConfig()
     engine = AIEngine(config)
-    context = GameContext(
-        game_id="test_game",
-        current_player=0,
-        turn_number=5,
-        phase="main",
-        player_health=25,
-        player_max_health=30,
-        player_mana=6,
-        player_max_mana=6,
-        player_hand=[],
-        player_field=[],
-        player_deck_size=15,
-        opponent_health=20,
-        opponent_max_health=30,
-        opponent_mana=4,
-        opponent_max_mana=4,
-        opponent_field=[],
-        opponent_hand_size=4,
-        opponent_deck_size=17
-    )
 
-    for strategy_name in engine.get_available_strategies():
-        print(f"  测试策略: {strategy_name}")
-        action = await engine.make_decision(context)
-        if action:
-            print(f"    ✅ 决策: {action.action_type.value} (置信度: {action.confidence:.2f})")
-        else:
-            print(f"    ❌ 无决策")
+    # 用于存储需要清理的资源
+    llm_manager = None
+    deepseek_client = None
+
+    try:
+        context = GameContext(
+            game_id="test_game",
+            current_player=0,
+            turn_number=5,
+            phase="main",
+            player_health=25,
+            player_max_health=30,
+            player_mana=6,
+            player_max_mana=6,
+            player_hand=ai_state.get("hand", []),
+            player_field=[],
+            player_deck_size=15,
+            opponent_health=20,
+            opponent_max_health=30,
+            opponent_mana=4,
+            opponent_max_mana=4,
+            opponent_field=[],
+            opponent_hand_size=4,
+            opponent_deck_size=17
+        )
+
+        for strategy_name in engine.get_available_strategies():
+            print(f"  测试策略: {strategy_name}")
+
+            # 如果是混合策略，需要配置LLM
+            if strategy_name == "hybrid":
+                try:
+                    from ai_engine.llm_integration.base import LLMManager
+                    from ai_engine.llm_integration.deepseek_client import DeepSeekClient
+                    from config.settings import get_settings
+
+                    settings = get_settings()
+                    if settings.ai.enable_llm and settings.ai.deepseek_api_key:
+                        llm_manager = LLMManager()
+                        deepseek_client = DeepSeekClient(settings.ai.deepseek_api_key)
+                        llm_manager.register_client("deepseek", deepseek_client, is_default=True)
+
+                        # 配置混合策略
+                        from ai_engine.strategies.hybrid import HybridAIStrategy
+                        hybrid_config = {
+                            "strategies": [
+                                {"name": "rule_based", "weight": 0.6, "min_confidence": 0.3},
+                                {"name": "llm_enhanced", "weight": 0.4, "min_confidence": 0.5}
+                            ]
+                        }
+                        hybrid_strategy = HybridAIStrategy("test_hybrid", hybrid_config)
+                        hybrid_strategy.set_llm_manager(llm_manager)
+                        engine.register_strategy("hybrid", hybrid_strategy)
+                        print("    ✅ 混合策略已配置LLM功能")
+                except Exception as e:
+                    print(f"    ⚠️ LLM配置失败: {e}，仅使用规则部分")
+
+            action = await engine.make_decision(context)
+            if action:
+                print(f"    ✅ 决策: {action.action_type.value} (置信度: {action.confidence:.2f})")
+            else:
+                print(f"    ❌ 无决策")
+
+    finally:
+        # 清理资源
+        if deepseek_client:
+            try:
+                await deepseek_client.close()
+                print("    ✅ 测试DeepSeek客户端已关闭")
+            except Exception as e:
+                print(f"    ⚠️ 关闭DeepSeek客户端时出错: {e}")
+
+        if llm_manager:
+            try:
+                if hasattr(llm_manager, 'clients'):
+                    for client in llm_manager.clients.values():
+                        if hasattr(client, 'close'):
+                            await client.close()
+                print("    ✅ 测试LLM管理器已清理")
+            except Exception as e:
+                print(f"    ⚠️ 清理LLM管理器时出错: {e}")
 
 
 async def test_personalities():
     """测试AI人格"""
-    from ai_engine.agents.agent_personality import PersonalityManager
+    from ai_engine.agents.agent_personality import PersonalityManager, PERSONALITY_PROFILES
     from ai_engine.strategies.rule_based import RuleBasedStrategy
     from game_engine.game_state.game_context import GameContext
 
@@ -1708,7 +2655,7 @@ async def test_personalities():
         player_max_health=30,
         player_mana=6,
         player_max_mana=6,
-        player_hand=[],
+        player_hand=ai_state.get("hand", []),
         player_field=[],
         player_deck_size=15,
         opponent_health=20,
@@ -1796,6 +2743,111 @@ def show_help():
     print(help_text)
 
 
+async def run_debug_command(args):
+    """运行调试命令"""
+    from rich.console import Console
+    from rich.table import Table
+    console = Console()
+
+    if args.action == "performance":
+        # 显示性能摘要
+        debugger.print_performance_summary()
+
+    elif args.action == "export":
+        # 导出调试报告
+        output_file = args.output if hasattr(args, 'output') and args.output else None
+        report_path = debugger.export_debug_report(output_file)
+        console.print(f"📊 调试报告已导出到: {report_path}")
+
+    elif args.action == "analyze":
+        # 分析决策模式
+        patterns = debugger.analyze_decision_patterns()
+
+        if "message" in patterns:
+            console.print(f"⚠️ {patterns['message']}")
+        else:
+            console.print("🔍 决策模式分析结果:")
+
+            # 策略分析表格
+            if "strategy_analysis" in patterns:
+                table = Table(title="策略性能分析")
+                table.add_column("策略", style="cyan")
+                table.add_column("决策数", justify="right")
+                table.add_column("平均置信度", justify="right")
+                table.add_column("平均耗时", justify="right")
+                table.add_column("最常用动作", style="green")
+
+                for strategy, stats in patterns["strategy_analysis"].items():
+                    most_common = max(stats["common_actions"].items(), key=lambda x: x[1])
+                    table.add_row(
+                        strategy,
+                        str(stats["count"]),
+                        f"{stats['avg_confidence']:.3f}",
+                        f"{stats['avg_time']:.3f}s",
+                        f"{most_common[0]} ({most_common[1]}次)"
+                    )
+                console.print(table)
+
+            # 置信度趋势
+            if "confidence_analysis" in patterns:
+                conf_analysis = patterns["confidence_analysis"]
+                console.print(f"\n📈 置信度趋势: {conf_analysis['confidence_trend']}")
+                console.print(f"   平均置信度: {conf_analysis['avg_confidence']:.3f}")
+                console.print(f"   高置信度比例: {conf_analysis['high_confidence_ratio']:.1%}")
+
+    elif args.action == "clear":
+        # 清空调试历史
+        debugger.clear_history()
+        console.print("🗑️ 调试历史已清空")
+
+    elif args.action == "save":
+        # 保存调试会话
+        filename = args.filename if hasattr(args, 'filename') and args.filename else None
+        debugger.save_session(filename)
+        console.print("💾 调试会话已保存")
+
+    elif args.action == "load":
+        # 加载调试会话
+        filename = args.filename if hasattr(args, 'filename') and args.filename else None
+        if not filename:
+            console.print("❌ 请指定要加载的会话文件")
+            return
+        debugger.load_session(filename)
+        console.print(f"📂 调试会话已从 {filename} 加载")
+
+    else:
+        console.print(f"❌ 未知的调试动作: {args.action}")
+        console.print("可用动作: performance, export, analyze, clear, save, load")
+
+
+async def cleanup_resources():
+    """清理所有资源"""
+    try:
+        # 清理设置管理器
+        try:
+            from config.user_preferences import get_settings_manager
+            manager = get_settings_manager()
+            if hasattr(manager, 'save_all_settings'):
+                manager.save_all_settings()
+                logger.debug("✅ 设置保存完成")
+        except Exception as e:
+            logger.debug(f"保存设置时出错: {e}")
+
+        # 强制垃圾回收
+        try:
+            import gc
+            gc.collect()
+            logger.debug("✅ 垃圾回收完成")
+        except Exception as e:
+            logger.debug(f"垃圾回收时出错: {e}")
+
+        logger.info("✅ 资源清理完成")
+
+    except Exception as e:
+        logger.debug(f"资源清理过程中出现错误: {e}")
+        # 即使清理失败也不抛出异常，确保程序能正常退出
+
+
 async def main():
     """主函数"""
     try:
@@ -1822,12 +2874,17 @@ async def main():
             await run_benchmark_command(args)
         elif args.command == "status":
             run_status_command(args)
+        elif args.command == "debug":
+            await run_debug_command(args)
         else:
             logger.error(f"未知命令: {args.command}")
             sys.exit(1)
 
     except KeyboardInterrupt:
         print("\n👋 程序被用户中断")
+        # 优雅退出，清理资源
+        await cleanup_resources()
+        return
     except Exception as e:
         # 更安全的verbose属性访问
         verbose = getattr(args, 'verbose', False) if 'args' in locals() else False
@@ -1836,7 +2893,18 @@ async def main():
             traceback.print_exc()
         else:
             logger.error(f"❌ 程序运行出错: {e}")
+        # 即使出错也要清理资源
+        try:
+            await cleanup_resources()
+        except:
+            pass
         sys.exit(1)
+    finally:
+        # 确保资源被清理
+        try:
+            await cleanup_resources()
+        except:
+            pass
 
 
 if __name__ == "__main__":
