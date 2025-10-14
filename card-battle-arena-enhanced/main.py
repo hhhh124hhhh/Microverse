@@ -9,6 +9,7 @@ import logging
 import sys
 import random
 from pathlib import Path
+from typing import Dict, Any
 
 # 添加项目根目录到Python路径
 project_root = Path(__file__).parent
@@ -75,6 +76,209 @@ def get_card_type(card):
         return card_type
     # 再尝试字典格式的type
     return safe_get_card_attr(card, 'type', 'minion')
+
+def create_ai_context(game: CardGame, ai_player_idx: int = 1, game_id: str = "ai_game") -> GameContext:
+    """
+    为AI创建正确的游戏上下文
+
+    Args:
+        game: 卡牌游戏实例
+        ai_player_idx: AI玩家的索引 (0 或 1)
+        game_id: 游戏ID
+
+    Returns:
+        GameContext: AI的游戏上下文
+    """
+    state = game.get_game_state()
+
+    # 确定AI和对手的状态
+    if game.current_player_idx == ai_player_idx:
+        # AI是当前玩家
+        ai_state = state["current_player_state"]
+        opponent_state = state["opponent_state"]
+        current_player_for_context = ai_player_idx
+    else:
+        # AI是对手（在AI vs AI模式中可能发生）
+        ai_state = state["opponent_state"]
+        opponent_state = state["current_player_state"]
+        current_player_for_context = ai_player_idx
+
+    return GameContext(
+        game_id=game_id,
+        current_player=current_player_for_context,
+        turn_number=game.turn_number,
+        phase="main",
+
+        # AI的状态
+        player_health=ai_state["health"],
+        player_max_health=ai_state["max_health"],
+        player_mana=ai_state["mana"],
+        player_max_mana=ai_state["max_mana"],
+        player_hand=ai_state.get("hand", []),
+        player_field=ai_state["field"],
+        player_deck_size=0,
+
+        # 对手的状态
+        opponent_health=opponent_state["health"],
+        opponent_max_health=opponent_state["max_health"],
+        opponent_mana=opponent_state["mana"],
+        opponent_max_mana=opponent_state["max_mana"],
+        opponent_field=opponent_state["field"],
+        opponent_hand_size=len(opponent_state.get("hand", [])),
+        opponent_deck_size=0
+    )
+
+async def execute_ai_action(action, game: CardGame, ai_player_idx: int = 1) -> Dict[str, Any]:
+    """
+    执行AI决策的动作，与AI分析保持一致
+
+    Args:
+        action: AI决策的动作
+        game: 卡牌游戏实例
+        ai_player_idx: AI玩家的索引
+
+    Returns:
+        Dict[str, Any]: 执行结果
+    """
+    if not action:
+        return {"success": False, "message": "AI无决策"}
+
+    action_type = action.action_type.value if hasattr(action.action_type, 'value') else str(action.action_type)
+
+    logger.info(f"🎯 执行AI动作: {action_type}")
+    if hasattr(action, 'reasoning') and action.reasoning:
+        logger.info(f"💭 AI推理: {action.reasoning[:100]}...")
+
+    result = {"success": False, "message": f"未知动作: {action_type}"}
+
+    if action_type in ["play_minion", "play_card"]:
+        # 优先使用AI建议的卡牌
+        suggested_card = None
+        if hasattr(action, 'parameters') and action.parameters:
+            suggested_card = action.parameters.get("card")
+
+        current = game.players[ai_player_idx]
+        playable_cards = []
+
+        # 如果AI建议了特定卡牌，优先选择它
+        if suggested_card:
+            suggested_name = get_card_name(suggested_card)
+            for i, card in enumerate(current.hand):
+                if get_card_name(card) == suggested_name and current.can_play_card(card):
+                    playable_cards.append((i, card, "AI推荐"))
+                    break
+
+        # 如果没有找到AI推荐的卡牌，或者AI没有推荐，找出所有可出的牌
+        if not playable_cards:
+            for i, card in enumerate(current.hand):
+                if current.can_play_card(card):
+                    playable_cards.append((i, card, "可用"))
+
+        if playable_cards:
+            # 选择AI推荐的卡牌，或者第一个可用的卡牌
+            card_idx, card, reason = playable_cards[0]
+            result = game.play_card(ai_player_idx, card_idx)
+
+            if result["success"]:
+                card_name = get_card_name(card)
+                card_attack = get_card_attack(card)
+                card_health = get_card_health(card)
+                result["message"] = f"AI打出 {card_name} ({card_attack}/{card_health}) - {reason} - {result['message']}"
+            else:
+                result["message"] = f"AI出牌失败: {result['message']}"
+        else:
+            result = {"success": False, "message": "AI没有可出的牌"}
+
+    elif action_type == "use_spell":
+        # 类似逻辑，处理法术牌
+        suggested_card = None
+        if hasattr(action, 'parameters') and action.parameters:
+            suggested_card = action.parameters.get("card")
+
+        current = game.players[ai_player_idx]
+        spell_cards = []
+
+        if suggested_card:
+            suggested_name = get_card_name(suggested_card)
+            for i, card in enumerate(current.hand):
+                if get_card_name(card) == suggested_name and get_card_type(card) == "spell" and current.can_play_card(card):
+                    spell_cards.append((i, card, "AI推荐"))
+                    break
+
+        if not spell_cards:
+            for i, card in enumerate(current.hand):
+                if get_card_type(card) == "spell" and current.can_play_card(card):
+                    spell_cards.append((i, card, "可用"))
+
+        if spell_cards:
+            card_idx, card, reason = spell_cards[0]
+            result = game.play_card(ai_player_idx, card_idx)
+
+            if result["success"]:
+                card_name = get_card_name(card)
+                card_attack = get_card_attack(card)
+                effect = "造成伤害" if card_attack > 0 else "治疗" if card_attack < 0 else "特殊效果"
+                result["message"] = f"AI使用法术 {card_name} ({effect}) - {reason} - {result['message']}"
+            else:
+                result["message"] = f"AI使用法术失败: {result['message']}"
+        else:
+            result = {"success": False, "message": "AI没有可用的法术"}
+
+    elif action_type == "use_hero_power":
+        result = game.use_hero_power(ai_player_idx)
+        if result["success"]:
+            result["message"] = f"AI使用英雄技能 - {result['message']}"
+        else:
+            result["message"] = f"AI使用英雄技能失败: {result['message']}"
+
+    elif action_type == "end_turn":
+        result = game.end_turn(ai_player_idx, auto_attack=True)
+        if result["success"]:
+            result["message"] = f"AI结束回合 - {result['message']}"
+        else:
+            result["message"] = f"AI结束回合失败: {result['message']}"
+
+    elif action_type == "attack":
+        # 处理攻击动作
+        if hasattr(action, 'parameters') and action.parameters:
+            attacker = action.parameters.get("attacker")
+            target = action.parameters.get("target")
+
+            if attacker and target:
+                # 需要找到对应的随从索引
+                current = game.players[ai_player_idx]
+                attacker_idx = None
+
+                for i, minion in enumerate(current.field):
+                    if get_card_name(minion) == get_card_name(attacker):
+                        attacker_idx = i
+                        break
+
+                if attacker_idx is not None:
+                    if isinstance(target, str) and "英雄" in target:
+                        result = game.attack_with_hero(ai_player_idx)
+                    else:
+                        target_name = get_card_name(target) if target else "随从0"
+                        result = game.attack_with_minion(ai_player_idx, attacker_idx, target_name)
+
+                    if result["success"]:
+                        result["message"] = f"AI执行攻击 - {result['message']}"
+                    else:
+                        result["message"] = f"AI攻击失败: {result['message']}"
+                else:
+                    result = {"success": False, "message": "AI找不到攻击随从"}
+            else:
+                result = {"success": False, "message": "AI攻击参数不完整"}
+        else:
+            result = {"success": False, "message": "AI攻击缺少参数"}
+
+    # 记录执行结果
+    if result["success"]:
+        logger.info(f"✅ AI动作执行成功: {result['message']}")
+    else:
+        logger.warning(f"❌ AI动作执行失败: {result['message']}")
+
+    return result
 
 
 def parse_arguments():
@@ -807,20 +1011,7 @@ async def run_human_vs_ai(args):
                         "description": safe_get_card_attr(card, 'description', '')
                     })
 
-                context = GameContext(
-                    game_id=f"human_vs_ai_game_{games_played + 1}",
-                    current_player=1,
-                    turn_number=game.turn_number,
-                    phase="main",
-
-                    player_health=ai_state["health"],
-                    player_mana=ai_state["mana"],
-                    player_hand=ai_hand_for_context,  # 传入AI的实际手牌
-                    player_field=ai_state["field"],
-                    opponent_health=state["current_player_state"]["health"],
-                    opponent_mana=state["current_player_state"]["mana"],
-                    opponent_field=state["current_player_state"]["field"]
-                )
+                context = create_ai_context(game, ai_player_idx=1, game_id=f"human_vs_ai_game_{games_played + 1}")
 
                 # 显示AI分析过程
                 print(f"  🧠 分析当前局面...")
@@ -1109,28 +1300,7 @@ async def run_interactive_mode(args):
             state = game.get_game_state()
             ai_state = state["opponent_state"]  # AI的视角
 
-            context = GameContext(
-                game_id="interactive_game",
-                current_player=1,
-                turn_number=game.turn_number,
-                phase="main",
-
-                player_health=ai_state["health"],
-                player_max_health=ai_state["max_health"],
-                player_mana=ai_state["mana"],
-                player_max_mana=ai_state["max_mana"],
-                player_hand=ai_state.get("hand", []),  # 修复：传递实际的手牌数据
-                player_field=ai_state["field"],
-                player_deck_size=0,  # 简化，不考虑AI的牌库
-
-                opponent_health=state["current_player_state"]["health"],
-                opponent_max_health=state["current_player_state"]["max_health"],
-                opponent_mana=state["current_player_state"]["mana"],
-                opponent_max_mana=state["current_player_state"]["max_mana"],
-                opponent_field=state["current_player_state"]["field"],
-                opponent_hand_size=len(state["current_player_state"]["hand"]),
-                opponent_deck_size=0
-            )
+            context = create_ai_context(game, ai_player_idx=1, game_id="interactive_game")
 
             # AI决策
             action = await ai_agent.make_decision(context)
@@ -1604,28 +1774,7 @@ async def run_menu_human_vs_ai(choice: dict, ui: GameUI):
                 state = game.get_game_state()
                 ai_state = state["opponent_state"]
 
-                context = GameContext(
-                    game_id=f"menu_game_{games_played + 1}",
-                    current_player=1,
-                    turn_number=game.turn_number,
-                    phase="main",
-
-                    player_health=ai_state["health"],
-                    player_max_health=ai_state["max_health"],
-                    player_mana=ai_state["mana"],
-                    player_max_mana=ai_state["max_mana"],
-                    player_hand=ai_state.get("hand", []),
-                    player_field=ai_state["field"],
-                    player_deck_size=0,
-
-                    opponent_health=state["current_player_state"]["health"],
-                    opponent_max_health=state["current_player_state"]["max_health"],
-                    opponent_mana=state["current_player_state"]["mana"],
-                    opponent_max_mana=state["current_player_state"]["max_mana"],
-                    opponent_field=state["current_player_state"]["field"],
-                    opponent_hand_size=len(state["current_player_state"]["hand"]),
-                    opponent_deck_size=0
-                )
+                context = create_ai_context(game, ai_player_idx=1, game_id=f"menu_game_{games_played + 1}")
 
                 # AI决策
                 action = await ai_agent.make_decision(context)
@@ -1992,60 +2141,8 @@ async def simulate_ai_vs_ai_game(agent1: AIAgent, agent2: AIAgent, game_num: int
             return 0
 
 
-async def execute_ai_action(action, player_idx, player_health, player_mana,
-                           player_hand, player_field, player_name, ui: GameUI):
-    """执行AI选择的动作"""
-    import random
-
-    if action.action_type.value in ["play_minion", "play_card"] and player_mana[player_idx] >= 2:
-        # 优先出随从
-        affordable_cards = [card for card in player_hand[player_idx]
-                           if card["card_type"] == "minion" and card["cost"] <= player_mana[player_idx]]
-        if affordable_cards:
-            card = random.choice(affordable_cards)
-            player_hand[player_idx].remove(card)
-            player_mana[player_idx] -= card["cost"]
-            player_field[player_idx].append(card)
-            ui.console.print(f"  ⚔️ {player_name} 打出 {card['name']} ({card['attack']}/{card['health']})")
-        else:
-            # 没有随从可出，尝试出法术
-            affordable_spells = [card for card in player_hand[player_idx]
-                               if card["card_type"] == "spell" and card["cost"] <= player_mana[player_idx]]
-            if affordable_spells:
-                spell = random.choice(affordable_spells)
-                player_hand[player_idx].remove(spell)
-                player_mana[player_idx] -= spell["cost"]
-
-                opponent_idx = 1 - player_idx
-                if spell["attack"] < 0:  # 治疗法术
-                    player_health[player_idx] = min(30, player_health[player_idx] - spell["attack"])
-                    ui.console.print(f"  💚 {player_name} 使用 {spell['name']} 治疗 {-spell['attack']} 点生命")
-                else:  # 伤害法术
-                    player_health[opponent_idx] -= spell["attack"]
-                    ui.console.print(f"  🔥 {player_name} 使用 {spell['name']} 造成 {spell['attack']} 点伤害")
-
-    elif action.action_type.value == "use_spell" and player_mana[player_idx] >= 2:
-        affordable_spells = [card for card in player_hand[player_idx]
-                            if card["card_type"] == "spell" and card["cost"] <= player_mana[player_idx]]
-        if affordable_spells:
-            spell = random.choice(affordable_spells)
-            player_hand[player_idx].remove(spell)
-            player_mana[player_idx] -= spell["cost"]
-
-            opponent_idx = 1 - player_idx
-            if spell["attack"] < 0:  # 治疗法术
-                player_health[player_idx] = min(30, player_health[player_idx] - spell["attack"])
-                ui.console.print(f"  💚 {player_name} 使用 {spell['name']} 治疗 {-spell['attack']} 点生命")
-            else:  # 伤害法术
-                player_health[opponent_idx] -= spell["attack"]
-                ui.console.print(f"  🔥 {player_name} 使用 {spell['name']} 造成 {spell['attack']} 点伤害")
-
-    elif action.action_type.value == "use_hero_power" and player_mana[player_idx] >= 2:
-        player_mana[player_idx] -= 2
-        opponent_idx = 1 - player_idx
-        damage = 2
-        player_health[opponent_idx] -= damage
-        ui.console.print(f"  ⚡ {player_name} 使用英雄技能，造成 {damage} 点伤害")
+# 旧的execute_ai_action函数已被新的版本替换
+# 新版本在第131行，使用更现代的参数和游戏对象
 
 
 async def ai_combat_phase(current_player, player_health, player_field, ui: GameUI):
@@ -2242,32 +2339,8 @@ async def run_menu_interactive(choice: dict, ui: GameUI):
             ui.console.print(f"\n🤖 {current_player.name} 正在思考...", style="blue")
             await asyncio.sleep(1.5)  # 模拟思考时间
 
-            # 创建游戏上下文给AI
-            state = game.get_game_state()
-            ai_state = state["opponent_state"]
-
-            context = GameContext(
-                game_id="interactive_game",
-                current_player=1,
-                turn_number=game.turn_number,
-                phase="main",
-
-                player_health=ai_state["health"],
-                player_max_health=ai_state["max_health"],
-                player_mana=ai_state["mana"],
-                player_max_mana=ai_state["max_mana"],
-                player_hand=ai_state.get("hand", []),
-                player_field=ai_state["field"],
-                player_deck_size=0,
-
-                opponent_health=state["current_player_state"]["health"],
-                opponent_max_health=state["current_player_state"]["max_health"],
-                opponent_mana=state["current_player_state"]["mana"],
-                opponent_max_mana=state["current_player_state"]["max_mana"],
-                opponent_field=state["current_player_state"]["field"],
-                opponent_hand_size=len(state["current_player_state"]["hand"]),
-                opponent_deck_size=0
-            )
+            # 创建游戏上下文给AI（AI总是第二个玩家）
+            context = create_ai_context(game, ai_player_idx=1, game_id="interactive_game")
 
             # AI决策
             action = await ai_agent.make_decision(context)

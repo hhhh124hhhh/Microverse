@@ -205,15 +205,17 @@ class LLMEnhancedStrategy(AIStrategy):
 - 必须提供详细且合理的推理过程
 - 优先考虑场面控制和价值交换"""
 
+        player_identity = f"玩家{context.current_player + 1}" + (" (先手)" if context.current_player == 0 else " (后手)")
         user_prompt = f"""请进行深度战术分析：
 
 ## 基础信息
 - 游戏ID: {context.game_id} | 回合: {context.turn_number} | 阶段: {context.phase}
-- 当前玩家: 玩家{context.current_player}
+- AI身份: {player_identity} (玩家索引: {context.current_player})
+- 回合数计算: 第{context.turn_number}回合, 你当前拥有{context.player_mana}/{context.player_max_mana}法力
 
-## 我方状态
+## 我方状态 ({player_identity})
 - **生命值**: {context.player_health} ❤️
-- **法力值**: {context.player_mana}/{context.player_mana + context.turn_number - 1} 💰
+- **法力值**: {context.player_mana}/{context.player_max_mana} 💰 (第{context.turn_number}回合)
 - **手牌**: {len(context.player_hand)} 张
 - **场面随从**: {len(context.player_field)} 个
 
@@ -850,10 +852,12 @@ class LLMEnhancedStrategy(AIStrategy):
 
     def _log_game_state(self, context: GameContext):
         """详细记录当前游戏状态"""
+        player_identity = f"玩家{context.current_player + 1}" if context.current_player == 0 else f"玩家{context.current_player + 1}(后手)"
         logger.info("📊 当前游戏状态分析:")
         logger.info(f"   🎮 游戏ID: {context.game_id} | 回合: {context.turn_number} | 阶段: {context.phase}")
-        logger.info(f"   ❤️  我方血量: {context.player_health} | 💰 法力: {context.player_mana}")
-        logger.info(f"   🎯 对手血量: {context.opponent_health} | 💰 法力: {context.opponent_mana}")
+        logger.info(f"   🤖 AI身份: {player_identity} | 当前玩家索引: {context.current_player}")
+        logger.info(f"   ❤️  我方血量: {context.player_health} | 💰 法力: {context.player_mana}/{context.player_max_mana}")
+        logger.info(f"   🎯 对手血量: {context.opponent_health} | 💰 法力: {context.opponent_mana}/{context.opponent_max_mana}")
 
         # 详细分析手牌
         if context.player_hand:
