@@ -5,10 +5,132 @@ Card Battle Arena Enhanced - 卡牌游戏核心引擎
 import random
 import asyncio
 import logging
+import shutil
 from typing import List, Dict, Optional, Any
 from dataclasses import dataclass, field
 
 logger = logging.getLogger(__name__)
+
+
+def get_terminal_width() -> int:
+    """获取终端宽度，失败时返回默认值"""
+    try:
+        # 尝试获取真实的终端尺寸
+        size = shutil.get_terminal_size()
+        width = size.columns
+
+        # 验证宽度的合理性
+        if width < 20:  # 终端太窄，不正常
+            return 80
+        elif width > 300:  # 终端太宽，可能不正常
+            return 120
+
+        return width
+    except:
+        # 备用方法：使用环境变量
+        try:
+            import os
+            if 'COLUMNS' in os.environ:
+                width = int(os.environ['COLUMNS'])
+                if 20 <= width <= 300:
+                    return width
+        except:
+            pass
+
+    # 最终备用值
+    return 80
+
+
+def calculate_table_widths(terminal_width: int, min_widths: Dict[str, int],
+                          total_min_width: int) -> Dict[str, int]:
+    """
+    根据终端宽度动态计算表格列宽
+
+    Args:
+        terminal_width: 终端总宽度
+        min_widths: 每列的最小宽度要求
+        total_min_width: 所有列的最小宽度总和
+
+    Returns:
+        各列的实际宽度
+    """
+    # 处理终端宽度异常情况
+    if terminal_width < 40:  # 极窄终端
+        terminal_width = 40
+    elif terminal_width > 200:  # 极宽终端限制
+        terminal_width = 200
+
+    # 调整边框和间距的预留宽度 - 考虑Panel和Layout的额外开销
+    border_reserve = 20 if terminal_width > 80 else 15
+
+    if terminal_width <= total_min_width + border_reserve:
+        # 终端太窄，按比例缩放最小宽度
+        scale_factor = (terminal_width - border_reserve) / total_min_width
+        result = {}
+        for key, width in min_widths.items():
+            result[key] = max(1, int(width * scale_factor))
+        return result
+
+    # 计算可分配的额外宽度
+    extra_width = terminal_width - total_min_width - border_reserve
+
+    if extra_width <= 0:
+        return min_widths
+
+    # 智能分配额外宽度，优先保证关键列的可用性
+    result = min_widths.copy()
+
+    # 优先级分配：编号列 > 卡牌名称 > 属性 > 类型 > 状态
+    # 编号列必须足够显示数字，优先分配
+    if "index" in result:
+        result["index"] = min(result["index"] + 2, 8)  # 确保编号列至少能显示2位数
+
+    remaining_width = extra_width - (result["index"] - min_widths["index"])
+
+    # 卡牌名称获得最大比例的额外宽度（最重要的信息）
+    if "name" in result and remaining_width > 0:
+        name_extra = min(remaining_width * 0.5, 15)  # 最多分配15个额外字符
+        result["name"] = min(result["name"] + int(name_extra), 40)
+        remaining_width -= int(name_extra)
+
+    # 属性列获得剩余宽度的40%
+    if "stats" in result and remaining_width > 0:
+        stats_extra = min(remaining_width * 0.4, 8)
+        result["stats"] = min(result["stats"] + int(stats_extra), 15)
+        remaining_width -= int(stats_extra)
+
+    # 类型列获得剩余宽度的30%
+    if "type" in result and remaining_width > 0:
+        type_extra = min(remaining_width * 0.3, 6)
+        result["type"] = min(result["type"] + int(type_extra), 12)
+        remaining_width -= int(type_extra)
+
+    # 状态列获得剩余的所有宽度
+    if "status" in result and remaining_width > 0:
+        result["status"] = min(result["status"] + int(remaining_width), 12)
+
+    return result
+
+
+def truncate_text(text: str, max_length: int, add_ellipsis: bool = True) -> str:
+    """
+    截断文本到指定长度
+
+    Args:
+        text: 要截断的文本
+        max_length: 最大长度
+        add_ellipsis: 是否添加省略号
+
+    Returns:
+        截断后的文本
+    """
+    if len(text) <= max_length:
+        return text
+
+    if add_ellipsis and max_length > 3:
+        return text[:max_length-3] + "..."
+    else:
+        return text[:max_length]
 
 
 def safe_get_card_attr(card, attr_name, default=None):
@@ -34,6 +156,32 @@ def get_card_attack(card):
 def get_card_health(card):
     """获取卡牌血量"""
     return safe_get_card_attr(card, 'health', 0)
+
+def get_minion_can_attack(card, default=False):
+    """安全获取随从攻击状态"""
+    try:
+        # 优先尝试直接访问属性
+        return getattr(card, 'can_attack', default)
+    except:
+        try:
+            # 尝试字典访问
+            return card['can_attack']
+        except (KeyError, TypeError):
+            # 如果是随从类型但没有攻击状态，默认为新上场不可攻击
+            if safe_get_card_attr(card, 'card_type', '') == 'minion':
+                return False  # 新上场的随从默认不能攻击
+            return default
+
+def ensure_minion_attack_state(card):
+    """确保随从有正确的攻击状态"""
+    if safe_get_card_attr(card, 'card_type', '') == 'minion':
+        # 如果随从没有can_attack属性，设置为False
+        if not hasattr(card, 'can_attack'):
+            card.can_attack = False
+        # 如果can_attack为None，设置为False
+        elif getattr(card, 'can_attack') is None:
+            card.can_attack = False
+    return card
 
 
 @dataclass
@@ -290,14 +438,12 @@ class CardGame:
 
         # 为新上场的随从设置攻击状态
         for minion in current.field:
-            if not hasattr(minion, 'can_attack'):
-                minion.can_attack = True
-            elif minion.can_attack is None:
-                minion.can_attack = True
+            ensure_minion_attack_state(minion)
+            minion.can_attack = True  # 回合开始时激活攻击状态
 
         # 获取可攻击的随从
         attackable_minions = [i for i, minion in enumerate(current.field)
-                            if getattr(minion, 'can_attack', False)]
+                            if get_minion_can_attack(minion, False)]
 
         if not attackable_minions:
             return messages
@@ -354,7 +500,7 @@ class CardGame:
                     continue
 
                 minion = current.field[minion_idx]
-                if not getattr(minion, 'can_attack', False):
+                if not get_minion_can_attack(minion, False):
                     continue
 
                 # 随机选择目标
@@ -576,9 +722,9 @@ class CardGame:
                 "field": [
                     {
                         "name": get_card_name(card),
-                        "attack": card.attack,
-                        "health": card.health,
-                        "mechanics": card.mechanics
+                        "attack": get_card_attack(card),
+                        "health": get_card_health(card),
+                        "mechanics": safe_get_card_attr(card, 'mechanics', [])
                     } for card in opponent.field
                 ]
             }
@@ -628,35 +774,56 @@ class CardGame:
             player_table.add_row("⚔️ 随从", f"{current['field_count']} 个")
             layout["player_info"].update(Panel(player_table, border_style="green"))
 
-            # 游戏区域 - 创建手牌和场地区域的布局
+            # 游戏区域 - 创建手牌、我方场地区域和对手场地区域的布局
             game_layout = Layout()
             game_layout.split_column(
                 Layout(name="hand_area", ratio=1),
-                Layout(name="field_area", ratio=1)
+                Layout(name="field_section", ratio=1)
             )
 
-            # 手牌显示
+            # 场地区域再分为我方和对手
+            game_layout["field_section"].split_row(
+                Layout(name="player_field", ratio=1),
+                Layout(name="opponent_field", ratio=1)
+            )
+
+            # 手牌显示 - 使用动态宽度
             if current["hand"]:
+                # 获取终端宽度并计算列宽
+                terminal_width = get_terminal_width()
+
+                # 最终优化列结构
+                min_widths = {
+                    "index": 3,    # 编号 - 最简化
+                    "name": 12,    # 卡牌名称 - 平衡长度
+                    "cost": 2,     # 费用 - 最简化
+                    "stats": 6,    # 属性 - 确保emoji可见
+                    "playable": 3  # 状态 - 最简化
+                }
+                total_min_width = sum(min_widths.values())
+
+                # 计算实际列宽
+                col_widths = calculate_table_widths(terminal_width, min_widths, total_min_width)
+
                 hand_table = Table(title="🃏 你的手牌", show_header=True)
-                hand_table.add_column("编号", style="yellow", width=4)
-                hand_table.add_column("卡牌", style="bold white", width=16)
-                hand_table.add_column("费用", style="blue", width=4)
-                hand_table.add_column("属性", style="red", width=8)
-                hand_table.add_column("类型", style="magenta", width=8)
-                hand_table.add_column("状态", style="green", width=8)
+                hand_table.add_column("#", style="yellow", justify="right")
+                hand_table.add_column("卡牌", style="bold white", justify="left")
+                hand_table.add_column("费", style="blue", justify="center")
+                hand_table.add_column("属性", style="red", justify="center")
+                hand_table.add_column("状态", style="green", justify="center")
 
                 for card in current["hand"]:
-                    status = "[green]✅ 可出[/green]" if card["playable"] else "[red]❌ 法力不足[/red]"
-                    mechanics_str = f" [{', '.join(card.get('mechanics', []))}]" if card.get('mechanics') else ""
+                    # 简化状态显示
+                    status = "✅" if card["playable"] else "❌"
 
-                    # 卡牌类型中文映射
-                    type_map = {"minion": "随从", "spell": "法术"}
-                    card_type_cn = type_map.get(card['type'], card['type'])
+                    # 卡牌类型和机制简短显示
+                    card_type = card.get('type', '')
+                    type_symbol = "⚔️" if card_type == "minion" else "🔮"  # 随从/法术符号
 
                     # 显示攻击力和血量（随从牌）或效果值（法术牌）
-                    if card['type'] == "minion":
+                    if card_type == "minion":
                         stats = f"[red]{card['attack']}[/red]/[green]{card['health']}[/green]"
-                    elif card['type'] == "spell":
+                    elif card_type == "spell":
                         if card['attack'] > 0:
                             stats = f"[red]🔥{card['attack']}[/red]"  # 伤害法术
                         elif card['attack'] < 0:
@@ -666,31 +833,53 @@ class CardGame:
                     else:
                         stats = ""
 
+                    # 卡牌名称（包含类型符号）
+                    card_name_with_type = f"{type_symbol} {card['name']}"
+
                     hand_table.add_row(
                         f"[yellow]{card['index']}[/yellow]",
-                        f"[bold]{card['name']}[/bold]",
+                        f"[bold]{card_name_with_type}[/bold]",
                         f"[blue]{card['cost']}[/blue]",
-                        stats,
-                        f"[magenta]{card_type_cn}[/magenta]{mechanics_str}",
-                        status
+                        stats,  # emoji属性显示
+                        f"[green]{status}[/green]"
                     )
 
                 game_layout["hand_area"].update(Panel(hand_table, border_style="cyan"))
             else:
                 game_layout["hand_area"].update(Panel("[dim]手牌为空[/dim]", border_style="dim"))
 
-            # 场上随从显示
+            # 我方场上随从显示 - 使用动态宽度
             if current["field"]:
-                field_table = Table(title="⚔️ 你的随从", show_header=True)
-                field_table.add_column("编号", style="yellow", width=4)
-                field_table.add_column("随从", style="bold white", width=16)
-                field_table.add_column("属性", style="red", width=8)
-                field_table.add_column("状态", style="green", width=10)
-                field_table.add_column("特效", style="blue", width=12)
+                # 复用已获取的终端宽度
+                if 'terminal_width' not in locals():
+                    terminal_width = get_terminal_width()
+
+                # 随从表格的最小列宽
+                field_min_widths = {
+                    "index": 6,      # 编号 - 增加宽度确保数字可见
+                    "name": 10,      # 随从名称
+                    "stats": 6,      # 属性
+                    "status": 8,     # 状态
+                    "effects": 8     # 特效
+                }
+                field_total_min = sum(field_min_widths.values())
+
+                # 计算随从表格的实际列宽
+                field_col_widths = calculate_table_widths(terminal_width, field_min_widths, field_total_min)
+
+                player_field_table = Table(title="⚔️ 你的随从", show_header=True)
+                player_field_table.add_column("编号", style="yellow", width=field_col_widths["index"], justify="right")
+                player_field_table.add_column("随从", style="bold white", width=field_col_widths["name"], justify="left")
+                player_field_table.add_column("属性", style="red", width=field_col_widths["stats"], justify="center")
+                player_field_table.add_column("状态", style="green", width=field_col_widths["status"], justify="center")
+                player_field_table.add_column("特效", style="blue", width=field_col_widths["effects"], justify="center")
 
                 for i, card in enumerate(current["field"]):
+                    # 确保随从有正确的攻击状态
+                    ensure_minion_attack_state(card)
+
                     # 攻击状态
-                    can_attack = getattr(card, 'can_attack', False)
+                    can_attack = get_minion_can_attack(card, False)
                     attack_status = "[green]⚔️可攻击[/green]" if can_attack else "[red]😴休眠[/red]"
 
                     # 特效标记
@@ -703,17 +892,70 @@ class CardGame:
                     }
                     mechanics_display = " ".join([mechanics_map.get(m, m) for m in card.get('mechanics', [])])
 
-                    field_table.add_row(
+                    # 使用智能截断确保内容不会超出列宽
+                    minion_name_display = truncate_text(get_card_name(card), field_col_widths["name"] - 2)
+                    mechanics_display_truncated = truncate_text(mechanics_display or "无", field_col_widths["effects"])
+
+                    player_field_table.add_row(
                         f"[yellow]{i}[/yellow]",
-                        f"[bold]{get_card_name(card)}[/bold]",
-                        f"[red]{card.attack}[/red]/[green]{card.health}[/green]",
+                        f"[bold]{minion_name_display}[/bold]",
+                        f"[red]{get_card_attack(card)}[/red]/[green]{get_card_health(card)}[/green]",
                         attack_status,
-                        mechanics_display or "[dim]无[/dim]"
+                        f"[blue]{mechanics_display_truncated}[/blue]" if mechanics_display else "[dim]无[/dim]"
                     )
 
-                game_layout["field_area"].update(Panel(field_table, border_style="green"))
+                game_layout["player_field"].update(Panel(player_field_table, border_style="green"))
             else:
-                game_layout["field_area"].update(Panel("[dim]场上没有随从[/dim]", border_style="dim"))
+                game_layout["player_field"].update(Panel("[dim]场上没有随从[/dim]", border_style="dim"))
+
+            # 对手场上随从显示 - 使用动态宽度
+            if opponent["field"]:
+                # 复用已获取的终端宽度和列宽配置
+                if 'terminal_width' not in locals():
+                    terminal_width = get_terminal_width()
+                field_min_widths = {
+                    "index": 6, "name": 10, "stats": 6, "status": 8, "effects": 8
+                }
+                field_total_min = sum(field_min_widths.values())
+                field_col_widths = calculate_table_widths(terminal_width, field_min_widths, field_total_min)
+
+                opponent_field_table = Table(title="🤖 对手随从", show_header=True)
+                opponent_field_table.add_column("编号", style="yellow", width=field_col_widths["index"], justify="right")
+                opponent_field_table.add_column("随从", style="bold white", width=field_col_widths["name"], justify="left")
+                opponent_field_table.add_column("属性", style="red", width=field_col_widths["stats"], justify="center")
+                opponent_field_table.add_column("状态", style="red", width=field_col_widths["status"], justify="center")
+                opponent_field_table.add_column("特效", style="blue", width=field_col_widths["effects"], justify="center")
+
+                for i, card in enumerate(opponent["field"]):
+                    # 对手随从状态 - 简化显示，只显示是否可攻击（潜行等特殊状态）
+                    can_attack = get_minion_can_attack(card, False)
+                    attack_status = "[red]⚔️可攻击[/red]" if can_attack else "[dim]😴休眠[/dim]"
+
+                    # 特效标记
+                    mechanics_map = {
+                        "taunt": "🛡️嘲讽",
+                        "divine_shield": "✨圣盾",
+                        "stealth": "🌑潜行",
+                        "ranged": "🏹远程",
+                        "spell_power": "🔥法强"
+                    }
+                    mechanics_display = " ".join([mechanics_map.get(m, m) for m in card.get('mechanics', [])])
+
+                    # 使用智能截断确保内容不会超出列宽
+                    minion_name_display = truncate_text(get_card_name(card), field_col_widths["name"] - 2)
+                    mechanics_display_truncated = truncate_text(mechanics_display or "无", field_col_widths["effects"])
+
+                    opponent_field_table.add_row(
+                        f"[yellow]{i}[/yellow]",
+                        f"[bold]{minion_name_display}[/bold]",
+                        f"[red]{get_card_attack(card)}[/red]/[green]{get_card_health(card)}[/green]",
+                        attack_status,
+                        f"[blue]{mechanics_display_truncated}[/blue]" if mechanics_display else "[dim]无[/dim]"
+                    )
+
+                game_layout["opponent_field"].update(Panel(opponent_field_table, border_style="red"))
+            else:
+                game_layout["opponent_field"].update(Panel("[dim]对手没有随从[/dim]", border_style="dim"))
 
             layout["game_area"].update(Panel(game_layout, border_style="blue"))
 
@@ -773,12 +1015,13 @@ class CardGame:
                     status = "✅ 可出" if card["playable"] else "❌ 法力不足"
                     mechanics_str = f" [{', '.join(card.get('mechanics', []))}]" if card.get('mechanics') else ""
                     type_map = {"minion": "随从", "spell": "法术"}
-                    card_type_cn = type_map.get(card['type'], card['type'])
+                    card_type = card.get('type', '')
+                    card_type_cn = type_map.get(card_type, card_type)
 
                     # 显示攻击力和血量（随从牌）或效果值（法术牌）
-                    if card['type'] == "minion":
+                    if card_type == "minion":
                         stats = f"({card['attack']}/{card['health']})"
-                    elif card['type'] == "spell":
+                    elif card_type == "spell":
                         if card['attack'] > 0:
                             stats = f"(🔥{card['attack']}伤害)"  # 伤害法术
                         elif card['attack'] < 0:
@@ -795,7 +1038,10 @@ class CardGame:
             if current["field"]:
                 print(f"\n⚔️ 你的随从:")
                 for i, card in enumerate(current["field"]):
-                    can_attack = getattr(card, 'can_attack', False)
+                    # 确保随从有正确的攻击状态
+                    ensure_minion_attack_state(card)
+
+                    can_attack = get_minion_can_attack(card, False)
                     attack_status = "⚔️可攻击" if can_attack else "😴休眠"
 
                     mechanics_map = {
@@ -843,7 +1089,7 @@ class CardGame:
 
         # 检查场上随从是否可以攻击
         attackable_minions = [i for i, minion in enumerate(current.field)
-                            if getattr(minion, 'can_attack', False)]
+                            if get_minion_can_attack(minion, False)]
         if attackable_minions:
             commands.append("随从攻击 <编号> <目标>")
 
@@ -947,7 +1193,7 @@ class CardGame:
         # 根据当前游戏状态添加相应帮助
         playable_cards = [i for i, card in enumerate(current.hand) if current.can_play_card(card)]
         attackable_minions = [i for i, minion in enumerate(current.field)
-                            if getattr(minion, 'can_attack', False)]
+                            if get_minion_can_attack(minion, False)]
 
         # 出牌帮助
         if playable_cards:
@@ -994,7 +1240,7 @@ class CardGame:
         minion = current_player.field[minion_idx]
 
         # 检查随从是否可以攻击
-        if not getattr(minion, 'can_attack', False):
+        if not get_minion_can_attack(minion, False):
             return []
 
         targets = []
@@ -1028,7 +1274,7 @@ class CardGame:
         minion = current.field[minion_idx]
 
         # 检查随从是否可以攻击
-        if not getattr(minion, 'can_attack', False):
+        if not get_minion_can_attack(minion, False):
             return {"success": False, "message": "该随从本回合无法攻击"}
 
         # 解析攻击目标

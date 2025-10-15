@@ -51,28 +51,34 @@ class HybridAIStrategy(AIStrategy):
 
     def __init__(self, name: str = "混合AI", config: Dict[str, Any] = None):
         default_config = {
-            # 策略配置
+            # 策略配置 - 平衡权重，让LLM有更多话语权
             "strategies": [
-                {"name": "rule_based", "weight": 0.6, "min_confidence": 0.3},
-                {"name": "llm_enhanced", "weight": 0.4, "min_confidence": 0.5}
+                {"name": "rule_based", "weight": 0.55, "min_confidence": 0.15},  # 降低规则策略权重，降低要求
+                {"name": "llm_enhanced", "weight": 0.45, "min_confidence": 0.4}   # 提高LLM权重，降低要求
             ],
 
             # 共识方法
             "consensus_method": ConsensusMethod.WEIGHTED_VOTING.value,
 
             # 性能阈值
-            "min_consensus_score": 0.3,  # 最小共识分数
-            "max_decision_time": 25.0,   # 最大决策时间（增加到25秒）
+            "min_consensus_score": 0.15,  # 进一步降低最小共识分数
+            "max_decision_time": 25.0,    # 增加最大决策时间，给LLM更多时间
 
             # 自适应配置
             "enable_adaptive_weights": True,  # 启用自适应权重
-            "performance_window": 20,         # 性能评估窗口
-            "weight_adjustment_factor": 0.1,  # 权重调整因子
+            "performance_window": 10,         # 减少性能评估窗口，更快适应
+            "weight_adjustment_factor": 0.2,  # 提高权重调整因子，更快调整
 
             # 容错配置
             "fallback_strategy": "rule_based",
             "min_participating_strategies": 1,
-            "enable_strategy_replacement": True
+            "enable_strategy_replacement": True,
+
+            # 优化：LLM超时处理配置
+            "llm_timeout_handling": "graceful_degradation",  # 优雅降级
+            "llm_timeout_grace_period": 20.0,  # 增加LLM超时宽限期
+            "fallback_to_rules_on_timeout": True,  # 超时时优先使用规则策略
+            "prefer_cards_over_hero_power": True  # 新增：优先出牌而不是英雄技能
         }
 
         if config:
@@ -217,12 +223,12 @@ class HybridAIStrategy(AIStrategy):
                                           context: GameContext) -> Tuple[str, Optional[AIAction]]:
         """带超时的策略执行"""
         try:
-            # 为LLM策略分配更长的超时时间
+            # 根据配置动态设置超时时间
             if strategy_name == "llm_enhanced":
-                timeout = 20.0  # LLM策略给20秒，避免超时
+                timeout = self.config.get("llm_timeout_grace_period", 15.0)
                 logger.info(f"🧠 执行LLM增强策略（超时: {timeout}秒）...")
             else:
-                timeout = 5.0  # 规则策略给5秒
+                timeout = 6.0  # 规则策略给6秒，稍微增加但保持响应性
                 logger.info(f"📋 执行规则策略（超时: {timeout}秒）...")
 
             action = await asyncio.wait_for(
@@ -240,6 +246,24 @@ class HybridAIStrategy(AIStrategy):
 
         except asyncio.TimeoutError:
             logger.warning(f"⏰ 策略 {strategy_name} 执行超时（{timeout}秒）")
+
+            # LLM策略超时时的特殊处理
+            if strategy_name == "llm_enhanced" and self.config.get("fallback_to_rules_on_timeout", True):
+                logger.info("🔄 LLM策略超时，启动优雅降级机制...")
+                # 立即执行规则策略作为回退
+                if "rule_based" in self.sub_strategies:
+                    try:
+                        rule_strategy = self.sub_strategies["rule_based"]
+                        fallback_action = await asyncio.wait_for(
+                            rule_strategy.execute_with_timing(context),
+                            timeout=3.0
+                        )
+                        if fallback_action:
+                            logger.info(f"🛡️ 规则策略回退成功: {fallback_action.action_type.value}")
+                            return "rule_based_fallback", fallback_action
+                    except Exception as fallback_error:
+                        logger.error(f"回退规则策略也失败: {fallback_error}")
+
         except Exception as e:
             logger.error(f"💥 策略 {strategy_name} 执行失败: {e}")
 
@@ -286,6 +310,16 @@ class HybridAIStrategy(AIStrategy):
                 weight = self.strategy_weights.get(strategy_name, 1.0)
                 confidence = action.confidence
 
+                # 应用出牌优先策略
+                if self.config.get("prefer_cards_over_hero_power", False):
+                    if action_type == ActionType.PLAY_CARD:
+                        # 在出牌和英雄技能之间选择时，优先出牌
+                        confidence *= 1.3  # 给出牌30%的加成
+                    elif action_type == ActionType.USE_HERO_POWER:
+                        # 如果有出牌选项，降低英雄技能优先级
+                        if ActionType.PLAY_CARD in action_groups:
+                            confidence *= 0.7  # 给英雄技能30%的惩罚
+
                 total_weight += weight
                 total_confidence += weight * confidence
                 participating_strategies.append(strategy_name)
@@ -301,7 +335,8 @@ class HybridAIStrategy(AIStrategy):
                     "method": "weighted_voting",
                     "total_weight": total_weight,
                     "avg_confidence": avg_confidence,
-                    "action_count": len(actions)
+                    "action_count": len(actions),
+                    "prefer_cards": self.config.get("prefer_cards_over_hero_power", False)
                 }
 
         # 计算共识分数

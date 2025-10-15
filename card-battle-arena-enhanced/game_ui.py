@@ -908,6 +908,1536 @@ class GameUI:
         self.console.print("\r" + " " * 50 + "\r", end="")
 
 
+# ============================================================================
+# TDD Layout重构部分
+# ============================================================================
+
+from rich.columns import Columns
+from rich.console import Console
+from rich.layout import Layout
+from typing import Any, Tuple, Optional, Union
+
+
+class GameLayout:
+    """基于Rich Layout的游戏界面布局管理器"""
+
+    def __init__(self):
+        """初始化Layout结构"""
+        self.console = Console()
+        self.layout_mode = "horizontal"  # 默认水平布局
+        self._create_layout()
+
+    def _create_layout(self):
+        """创建基础Layout结构"""
+        self.layout = Layout()
+
+        # 主要垂直分割：上部游戏信息区，下部交互区
+        self.layout.split_column(
+            Layout(name="upper", ratio=3),
+            Layout(name="lower", ratio=2)
+        )
+
+        # 上部横向分割：玩家状态 | 游戏区域 | 对手状态
+        self.layout["upper"].split_row(
+            Layout(name="player_status", size=30),
+            Layout(name="game_area", ratio=1),
+            Layout(name="opponent_status", size=30)
+        )
+
+        # 下部横向分割：手牌区域 | 命令区域
+        self.layout["lower"].split_row(
+            Layout(name="hand_area", ratio=3),
+            Layout(name="command_area", size=25)
+        )
+
+        # 为游戏区域再细分：战场区域
+        self.layout["game_area"].split_column(
+            Layout(name="battlefield_area", ratio=1),
+            Layout(name="info_area", size=3)
+        )
+
+    def adapt_to_width(self, width: int):
+        """根据终端宽度适配布局模式"""
+        if width < 80:
+            self.layout_mode = "vertical"
+            # 实现垂直布局逻辑（后续实现）
+        elif width < 120:
+            self.layout_mode = "compact"
+            # 实现紧凑布局逻辑（后续实现）
+        else:
+            self.layout_mode = "horizontal"
+            # 保持当前水平布局
+
+    def update_player_status(self, player_data: dict):
+        """更新玩家状态区域"""
+        panel = create_player_status_panel(player_data)
+        self.layout["player_status"].update(panel)
+
+    def update_opponent_status(self, opponent_data: dict):
+        """更新对手状态区域"""
+        panel = create_opponent_status_panel(opponent_data)
+        self.layout["opponent_status"].update(panel)
+
+    def update_hand_area(self, hand_cards: list, current_mana: int):
+        """更新手牌区域"""
+        table = create_hand_cards_table(hand_cards, current_mana)
+        self.layout["hand_area"].update(table)
+
+    def update_battlefield_area(self, player_field: list, opponent_field: list):
+        """更新战场区域"""
+        component = create_battlefield_component(player_field, opponent_field)
+        self.layout["battlefield_area"].update(component)
+
+    def update_command_area(self, available_actions: list = None):
+        """更新命令区域"""
+        panel = create_command_panel(available_actions)
+        self.layout["command_area"].update(panel)
+
+    def update_battlefield_visibility(self, player_field: list, opponent_field: list):
+        """更新战场区域可见性"""
+        has_minions = len(player_field) > 0 or len(opponent_field) > 0
+        # 暂时简化可见性控制逻辑，避免Layout访问错误
+        # 后续在重构阶段完善
+        pass
+
+
+class GameUIWithLive:
+    """带Live渲染功能的游戏UI（修复版本，支持用户交互）"""
+
+    def __init__(self):
+        self.layout_manager = GameLayout()
+        self.live = None
+        self.game_state = {}
+        self._is_running = False
+        self._last_update_time = 0
+        self._min_update_interval = 0.1  # 最小更新间隔（秒）
+        self._input_handler = UserInputHandler()
+
+    def start_rendering(self):
+        """开始Live渲染"""
+        if self._is_running:
+            return  # 防止重复启动
+
+        from rich.live import Live
+        import time
+
+        self.live = Live(
+            self.layout_manager.layout,
+            console=self.layout_manager.console,
+            refresh_per_second=4,  # 提高刷新率减少闪烁
+            transient=False,  # 防止闪烁
+            auto_refresh=True  # 自动刷新
+        )
+
+        try:
+            self.live.start()
+            self._is_running = True
+
+            # 启动后立即刷新一次显示内容
+            if self.game_state:
+                self._force_refresh()
+
+        except Exception as e:
+            self.layout_manager.console.print(f"[red]❌ Live启动失败: {e}[/red]")
+            self._is_running = False
+
+    def _refresh_layout(self) -> None:
+        """安全刷新布局（Live内部调用）"""
+        # 这个方法会被Live自动调用，不需要手动实现
+        pass
+
+    def _force_refresh(self):
+        """强制刷新显示内容"""
+        if hasattr(self, 'live') and self.live:
+            try:
+                # 更新所有组件内容
+                if self.game_state:
+                    self._render_all_components()
+
+                # 立即刷新Live显示
+                self.live.refresh()
+            except Exception as e:
+                self.layout_manager.console.print(f"[red]❌ 强制刷新失败: {e}[/red]")
+
+    def _render_all_components(self):
+        """渲染所有UI组件"""
+        if not self.game_state:
+            return
+
+        try:
+            # 更新各个区域
+            if "player" in self.game_state:
+                self.layout_manager.update_player_status(self.game_state["player"])
+
+            if "opponent" in self.game_state:
+                self.layout_manager.update_opponent_status(self.game_state["opponent"])
+
+            if "hand" in self.game_state and "player" in self.game_state:
+                self.layout_manager.update_hand_area(
+                    self.game_state["hand"],
+                    self.game_state["player"].get("mana", 0)
+                )
+
+            if "battlefield" in self.game_state:
+                self.layout_manager.update_battlefield_area(
+                    self.game_state["battlefield"].get("player", []),
+                    self.game_state["battlefield"].get("opponent", [])
+                )
+
+            # 更新命令区域
+            available_commands = self._get_available_commands(self.game_state)
+            self.layout_manager.update_command_area(available_commands)
+
+        except Exception as e:
+            self.layout_manager.console.print(f"[red]❌ 渲染组件失败: {e}[/red]")
+
+    def update_game_state(self, game_state: dict):
+        """更新游戏状态并重新渲染（带节流）"""
+        import time
+
+        # 总是更新游戏状态，即使Live没有启动
+        if not game_state:
+            return
+
+        # 节流：避免过于频繁的更新（仅在Live运行时）
+        if self._is_running and self.live:
+            current_time = time.time()
+            if current_time - self._last_update_time < self._min_update_interval:
+                return
+
+        try:
+            # 检查状态是否真的发生了变化（仅在Live运行时）
+            if self._is_running and not self._has_state_changed(game_state):
+                return
+
+            # 总是更新内部游戏状态
+            self.game_state = game_state.copy()  # 深拷贝避免引用问题
+
+            # 仅在Live运行时更新UI组件
+            if self._is_running and self.live:
+                # 更新各个区域
+                if "player" in game_state:
+                    self.layout_manager.update_player_status(game_state["player"])
+
+                if "opponent" in game_state:
+                    self.layout_manager.update_opponent_status(game_state["opponent"])
+
+                if "hand" in game_state and "player" in game_state:
+                    self.layout_manager.update_hand_area(
+                        game_state["hand"],
+                        game_state["player"].get("mana", 0)
+                    )
+
+                if "battlefield" in game_state:
+                    self.layout_manager.update_battlefield_area(
+                        game_state["battlefield"].get("player", []),
+                        game_state["battlefield"].get("opponent", [])
+                    )
+
+                # 更新命令区域
+                available_commands = self._get_available_commands(game_state)
+                self.layout_manager.update_command_area(available_commands)
+
+                self._last_update_time = time.time()
+
+        except Exception as e:
+            self.layout_manager.console.print(f"[red]❌ 更新游戏状态失败: {e}[/red]")
+
+    def _has_state_changed(self, new_state: dict) -> bool:
+        """检查游戏状态是否发生了变化"""
+        if not self.game_state:
+            return True
+
+        # 检查关键字段是否变化
+        key_fields = ["player", "opponent", "hand", "battlefield"]
+
+        for field in key_fields:
+            if field in new_state and field in self.game_state:
+                if new_state[field] != self.game_state[field]:
+                    return True
+            elif field in new_state or field in self.game_state:
+                return True  # 字段存在性变化
+
+        return False
+
+    def _get_available_commands(self, game_state: dict) -> list:
+        """根据游戏状态获取可用命令"""
+        commands = ["帮助", "设置"]
+
+        if "player" in game_state:
+            player = game_state["player"]
+            mana = player.get("mana", 0)
+
+            # 检查是否有可出的卡牌
+            if "hand" in game_state:
+                playable_cards = [
+                    card for card in game_state["hand"]
+                    if card.get("cost", 0) <= mana
+                ]
+                if playable_cards:
+                    commands.insert(0, f"出牌 0-{len(playable_cards)-1}")
+
+            # 检查是否可以使用英雄技能
+            if mana >= 2:
+                commands.insert(-1, "技能")
+
+        commands.append("结束回合")
+        return commands
+
+    def stop_rendering(self):
+        """停止Live渲染"""
+        if self.live and self._is_running:
+            try:
+                self.live.stop()
+                self._is_running = False
+            except Exception as e:
+                self.layout_manager.console.print(f"[yellow]⚠️ 停止Live时出错: {e}[/yellow]")
+            finally:
+                self.live = None
+
+    async def process_user_input(self, input_str: str) -> Tuple[bool, str, Optional[dict]]:
+        """
+        处理用户输入并返回结果
+
+        Args:
+            input_str: 用户输入字符串
+
+        Returns:
+            (是否成功, 消息, 动作数据)
+        """
+        # 解析命令
+        success, command_data = self._input_handler.parse_command(input_str)
+
+        if not success:
+            error_msg = self._input_handler.format_error_message('invalid_command')
+            return False, error_msg, None
+
+        command_type, params = command_data
+
+        # 根据命令类型处理
+        if command_type == 'help':
+            help_text = self._input_handler.get_command_help()
+            return True, help_text, None
+
+        elif command_type == 'quit':
+            return True, "👋 游戏已退出", {'action': 'quit'}
+
+        elif command_type == 'play_card':
+            return await self._handle_play_card(params)
+
+        elif command_type == 'hero_power':
+            return await self._handle_hero_power()
+
+        elif command_type == 'attack':
+            return await self._handle_attack(params)
+
+        elif command_type == 'end_turn':
+            return await self._handle_end_turn()
+
+        else:
+            error_msg = self._input_handler.format_error_message('invalid_command', f"未知命令类型: {command_type}")
+            return False, error_msg, None
+
+    async def _handle_play_card(self, card_index: int) -> Tuple[bool, str, Optional[dict]]:
+        """处理出牌命令"""
+        if not self.game_state or 'hand' not in self.game_state:
+            return False, "❌ 游戏状态未初始化", None
+
+        # 检查手牌是否存在
+        hand_cards = self.game_state.get('hand', [])
+        if card_index >= len(hand_cards):
+            max_index = len(hand_cards) - 1
+            if max_index < 0:
+                return False, "❌ 没有可出的手牌", None
+            error_msg = self._input_handler.format_error_message('invalid_card', f"请选择0-{max_index}之间的卡牌")
+            return False, error_msg, None
+
+        # 检查卡牌是否可以出
+        card = hand_cards[card_index]
+        card_cost = card.get('cost', 0)
+        current_mana = self.game_state.get('player', {}).get('mana', 0)
+
+        can_play, error_msg = self._input_handler.can_play_card(card_cost, current_mana)
+        if not can_play:
+            return False, error_msg, None
+
+        # 返回出牌动作
+        card_name = card.get('name', '未知卡牌')
+        success_msg = self._input_handler.format_success_message('play_card', card_name)
+        return True, success_msg, {'action': 'play_card', 'card_index': card_index, 'card': card}
+
+    async def _handle_hero_power(self) -> Tuple[bool, str, Optional[dict]]:
+        """处理英雄技能命令"""
+        if not self.game_state or 'player' not in self.game_state:
+            return False, "❌ 游戏状态未初始化", None
+
+        current_mana = self.game_state.get('player', {}).get('mana', 0)
+        can_use, error_msg = self._input_handler.can_use_hero_power(current_mana)
+        if not can_use:
+            return False, error_msg, None
+
+        success_msg = self._input_handler.format_success_message('hero_power')
+        return True, success_msg, {'action': 'hero_power'}
+
+    async def _handle_attack(self, attack_params: Tuple[int, int]) -> Tuple[bool, str, Optional[dict]]:
+        """处理攻击命令"""
+        if not self.game_state or 'battlefield' not in self.game_state:
+            return False, "❌ 游戏状态未初始化", None
+
+        attacker_index, target_index = attack_params
+
+        # 检查战场状态
+        battlefield = self.game_state.get('battlefield', {})
+        player_field = battlefield.get('player', [])
+        opponent_field = battlefield.get('opponent', [])
+
+        # 验证攻击者索引
+        if attacker_index >= len(player_field):
+            max_attacker = len(player_field) - 1
+            if max_attacker < 0:
+                return False, "❌ 你没有可攻击的随从", None
+            error_msg = self._input_handler.format_error_message('invalid_attack', f"请选择0-{max_attacker}之间的我方随从")
+            return False, error_msg, None
+
+        # 验证目标索引（可以攻击对手随从或英雄）
+        max_target = len(opponent_field)  # 随从数量
+        if target_index > max_target:  # 最后一个是英雄
+            if max_target < 0:
+                max_target = 0  # 只有英雄
+            error_msg = self._input_handler.format_error_message('invalid_attack', f"请选择0-{max_target}之间的敌方目标")
+            return False, error_msg, None
+
+        # 检查攻击者是否可以攻击
+        attacker = player_field[attacker_index]
+        can_attack = attacker.get('can_attack', False)
+        if not can_attack:
+            attacker_name = attacker.get('name', '随从')
+            error_msg = self._input_handler.format_error_message('cannot_attack', f"{attacker_name}当前无法攻击（可能刚上场或已攻击过）")
+            return False, error_msg, None
+
+        # 确定攻击目标
+        is_attacking_hero = target_index == len(opponent_field)
+        target_info = {'type': 'hero'} if is_attacking_hero else {'type': 'minion', 'index': target_index, 'minion': opponent_field[target_index]}
+
+        attacker_name = attacker.get('name', '随从')
+        target_name = '敌方英雄' if is_attacking_hero else opponent_field[target_index].get('name', '随从')
+
+        success_msg = self._input_handler.format_success_message('attack', f"{attacker_name} 攻击 {target_name}")
+        return True, success_msg, {
+            'action': 'attack',
+            'attacker_index': attacker_index,
+            'attacker': attacker,
+            'target': target_info
+        }
+
+    async def _handle_end_turn(self) -> Tuple[bool, str, Optional[dict]]:
+        """处理结束回合命令"""
+        success_msg = self._input_handler.format_success_message('end_turn')
+        return True, success_msg, {'action': 'end_turn'}
+
+    async def interactive_game_loop(self):
+        """交互式游戏循环"""
+        if not self._is_running:
+            self.start_rendering()
+
+        self.layout_manager.console.print("\n🎮 [bold green]游戏开始！[/bold green]")
+        self.layout_manager.console.print("输入'help'查看可用命令，输入'quit'退出游戏")
+        self.layout_manager.console.print("=" * 50)
+
+        from rich.prompt import Prompt
+
+        try:
+            while self._is_running:
+                # 获取用户输入
+                try:
+                    user_input = Prompt.ask("\n[bold cyan]请输入命令[/bold cyan]", default="", show_default=False)
+                except KeyboardInterrupt:
+                    user_input = "quit"
+
+                if not user_input.strip():
+                    continue
+
+                # 处理用户输入
+                success, message, action_data = await self.process_user_input(user_input)
+
+                # 显示处理结果
+                if success:
+                    if action_data and action_data.get('action') == 'quit':
+                        self.layout_manager.console.print(message)
+                        break
+                    else:
+                        self.layout_manager.console.print(f"[green]{message}[/green]")
+
+                        # 这里应该调用游戏引擎来执行动作
+                        # 暂时只是模拟反馈
+                        if action_data:
+                            await self._simulate_action_result(action_data)
+                else:
+                    self.layout_manager.console.print(f"[red]{message}[/red]")
+
+        except Exception as e:
+            self.layout_manager.console.print(f"[red]❌ 游戏循环出错: {e}[/red]")
+        finally:
+            self.stop_rendering()
+
+    async def _simulate_action_result(self, action_data: dict):
+        """模拟动作执行结果（临时实现，后续集成真实游戏引擎）"""
+        action = action_data.get('action')
+
+        if action == 'play_card':
+            # 模拟出牌后的状态变化
+            await asyncio.sleep(0.5)
+            self.layout_manager.console.print("[dim]🎯 卡牌已打出，等待游戏引擎处理...[/dim]")
+
+        elif action == 'hero_power':
+            # 模拟使用技能
+            await asyncio.sleep(0.5)
+            self.layout_manager.console.print("[dim]💪 英雄技能已使用，等待游戏引擎处理...[/dim]")
+
+        elif action == 'attack':
+            # 模拟攻击
+            await asyncio.sleep(0.5)
+            self.layout_manager.console.print("[dim]⚔️ 攻击已执行，等待游戏引擎处理...[/dim]")
+
+        elif action == 'end_turn':
+            # 模拟结束回合
+            await asyncio.sleep(0.5)
+            self.layout_manager.console.print("[dim]🔄 回合已结束，等待对手行动...[/dim]")
+
+            # 模拟一些对手行动
+            await self._simulate_opponent_turn()
+
+    async def _simulate_opponent_turn(self):
+        """模拟对手回合（临时实现）"""
+        await asyncio.sleep(1)
+        self.layout_manager.console.print("[dim]🤖 对手正在思考...[/dim]")
+        await asyncio.sleep(1)
+        self.layout_manager.console.print("[dim]🤖 对手结束回合[/dim]")
+        self.layout_manager.console.print("[green]✅ 轮到你的回合！[/green]")
+
+
+def create_player_status_panel(player_data: dict):
+    """创建玩家状态面板"""
+    # 创建状态表格
+    status_table = Table(show_header=False, box=None, padding=0)
+    status_table.add_column("属性", style="cyan", width=8)
+    status_table.add_column("数值", style="white")
+
+    status_table.add_row("❤️ 生命值", f"{player_data.get('health', 0)}/{player_data.get('max_health', 0)}")
+    status_table.add_row("💰 法力值", f"{player_data.get('mana', 0)}/{player_data.get('max_mana', 0)}")
+    status_table.add_row("🃋 手牌", f"{player_data.get('hand_count', 0)}张")
+    status_table.add_row("⚔️ 随从", f"{player_data.get('field_count', 0)}个")
+
+    return Panel(
+        status_table,
+        title="👤 玩家状态",
+        border_style="green"
+    )
+
+
+def create_opponent_status_panel(opponent_data: dict):
+    """创建对手状态面板"""
+    # 创建状态表格
+    status_table = Table(show_header=False, box=None, padding=0)
+    status_table.add_column("属性", style="cyan", width=8)
+    status_table.add_column("数值", style="white")
+
+    status_table.add_row("❤️ 生命值", f"{opponent_data.get('health', 0)}/{opponent_data.get('max_health', 0)}")
+    status_table.add_row("💰 法力值", f"{opponent_data.get('mana', 0)}/{opponent_data.get('max_mana', 0)}")
+    status_table.add_row("🃋 手牌", f"{opponent_data.get('hand_count', 0)}张")
+    status_table.add_row("⚔️ 随从", f"{opponent_data.get('field_count', 0)}个")
+
+    return Panel(
+        status_table,
+        title="🤖 对手状态",
+        border_style="red"
+    )
+
+
+def create_hand_cards_table(hand_cards: list, current_mana: int):
+    """创建手牌显示表格"""
+    table = Table(title="🃏 你的手牌", show_header=True, header_style="bold blue")
+    table.add_column("编号", style="white", width=4, justify="center")
+    table.add_column("卡牌名称", style="white", width=16)
+    table.add_column("费用", style="yellow", width=4, justify="center")
+    table.add_column("属性", style="cyan", width=8)
+    table.add_column("状态", style="green", width=8)
+
+    for card in hand_cards:
+        index = str(card.get("index", "?"))
+        name = card.get("name", "未知")
+        cost = str(card.get("cost", 0))
+        card_type = card.get("type", "未知")
+
+        # 计算属性显示
+        if card_type == "minion":
+            attack = card.get("attack", 0)
+            health = card.get("health", 0)
+            attributes = f"{attack}/{health}"
+        else:
+            attributes = "法术"
+
+        # 判断可出性
+        is_playable = card.get("cost", 0) <= current_mana
+        status = "✅ 可出" if is_playable else "❌ 费用不足"
+
+        table.add_row(index, name, cost, attributes, status)
+
+    return table
+
+
+def create_battlefield_component(player_field: list, opponent_field: list):
+    """创建战场状态组件"""
+    if not player_field and not opponent_field:
+        return Panel("战场上没有随从", title="⚔️ 战场", border_style="yellow")
+
+    # 创建战场表格
+    battlefield_table = Table(title="⚔️ 战场", show_header=True)
+    battlefield_table.add_column("阵营", style="white", width=8)
+    battlefield_table.add_column("随从", style="white", width=12)
+    battlefield_table.add_column("属性", style="cyan", width=8)
+    battlefield_table.add_column("状态", style="yellow", width=8)
+
+    # 玩家随从
+    for minion in player_field:
+        name = minion.get("name", "未知")
+        attack = minion.get("attack", 0)
+        health = minion.get("health", 0)
+        can_attack = minion.get("can_attack", False)
+
+        attributes = f"{attack}/{health}"
+        status = "🗡️ 可攻" if can_attack else "😴 休眠"
+
+        battlefield_table.add_row("👤 玩家", name, attributes, status)
+
+    # 对手随从
+    for minion in opponent_field:
+        name = minion.get("name", "未知")
+        attack = minion.get("attack", 0)
+        health = minion.get("health", 0)
+        can_attack = minion.get("can_attack", False)
+
+        attributes = f"{attack}/{health}"
+        status = "⚠️ 威胁" if can_attack else "😴 休眠"
+
+        battlefield_table.add_row("🤖 对手", name, attributes, status)
+
+    return battlefield_table
+
+
+def create_command_panel(available_actions: list = None):
+    """创建命令提示面板"""
+    if available_actions is None:
+        available_actions = ["出牌", "技能", "结束回合", "帮助"]
+
+    commands_text = "\n".join([f"• {action}" for action in available_actions])
+
+    return Panel(
+        commands_text,
+        title="💬 可用命令",
+        border_style="blue"
+    )
+
+
+# ============================================================================
+# 用户输入处理类（TDD实现）
+# ============================================================================
+
+import re
+
+
+class UserInputHandler:
+    """用户输入处理器 - TDD实现"""
+
+    def __init__(self):
+        """初始化输入处理器"""
+        self.command_patterns = {
+            'play_card': [
+                re.compile(r'^出牌\s*(\d+)$', re.IGNORECASE),
+                re.compile(r'^play\s*(\d+)$', re.IGNORECASE),
+                re.compile(r'^(\d+)$', re.IGNORECASE)  # 简单数字输入
+            ],
+            'hero_power': [
+                re.compile(r'^技能$', re.IGNORECASE),
+                re.compile(r'^skill$', re.IGNORECASE),
+                re.compile(r'^power$', re.IGNORECASE)
+            ],
+            'end_turn': [
+                re.compile(r'^结束回合$', re.IGNORECASE),
+                re.compile(r'^end\s*turn$', re.IGNORECASE),
+                re.compile(r'^end$', re.IGNORECASE)
+            ],
+            'attack': [
+                re.compile(r'^攻击\s*(\d+)\s*(\d+)$', re.IGNORECASE),
+                re.compile(r'^attack\s*(\d+)\s*(\d+)$', re.IGNORECASE)
+            ],
+            'help': [
+                re.compile(r'^帮助$', re.IGNORECASE),
+                re.compile(r'^help$', re.IGNORECASE),
+                re.compile(r'^\?$', re.IGNORECASE)
+            ],
+            'quit': [
+                re.compile(r'^退出$', re.IGNORECASE),
+                re.compile(r'^quit$', re.IGNORECASE),
+                re.compile(r'^exit$', re.IGNORECASE)
+            ]
+        }
+
+    def parse_command(self, input_str: str) -> Tuple[bool, Optional[Tuple[str, Union[int, None, Tuple]]]]:
+        """
+        解析用户输入命令
+
+        Args:
+            input_str: 用户输入字符串
+
+        Returns:
+            (是否成功, (命令类型, 参数)) 或 (False, None)
+        """
+        if not input_str or not input_str.strip():
+            return False, None
+
+        input_str = input_str.strip()
+
+        # 尝试匹配所有命令模式
+        for command, patterns in self.command_patterns.items():
+            for pattern in patterns:
+                match = pattern.match(input_str)
+                if match:
+                    # 根据命令类型提取参数
+                    if command == 'play_card':
+                        card_index = int(match.group(1))
+                        return True, (command, card_index)
+                    elif command == 'attack':
+                        attacker_index = int(match.group(1))
+                        target_index = int(match.group(2))
+                        return True, (command, (attacker_index, target_index))
+                    elif command in ['hero_power', 'end_turn', 'help', 'quit']:
+                        return True, (command, None)
+
+        return False, None
+
+    def validate_card_index(self, index: int, max_index: int) -> Tuple[bool, str]:
+        """
+        验证卡牌索引是否有效
+
+        Args:
+            index: 卡牌索引
+            max_index: 最大有效索引
+
+        Returns:
+            (是否有效, 错误信息)
+        """
+        if index < 0:
+            return False, "❌ 卡牌索引不能为负数"
+
+        if index > max_index:
+            return False, f"❌ 无效的卡牌编号，请选择0-{max_index}之间的卡牌"
+
+        return True, ""
+
+    def validate_attack_indices(self, attacker_index: int, target_index: int,
+                              max_attacker: int, max_target: int) -> Tuple[bool, str]:
+        """
+        验证攻击索引是否有效
+
+        Args:
+            attacker_index: 攻击者索引
+            target_index: 目标索引
+            max_attacker: 最大攻击者索引
+            max_target: 最大目标索引
+
+        Returns:
+            (是否有效, 错误信息)
+        """
+        # 验证攻击者索引
+        attacker_valid, attacker_error = self.validate_card_index(attacker_index, max_attacker)
+        if not attacker_valid:
+            return False, attacker_error
+
+        # 验证目标索引
+        target_valid, target_error = self.validate_card_index(target_index, max_target)
+        if not target_valid:
+            return False, target_error
+
+        # 验证不能攻击自己
+        if attacker_index == target_index:
+            return False, "❌ 不能攻击自己的随从"
+
+        return True, ""
+
+    def can_play_card(self, card_cost: int, current_mana: int) -> Tuple[bool, str]:
+        """
+        检查是否可以出牌
+
+        Args:
+            card_cost: 卡牌费用
+            current_mana: 当前法力值
+
+        Returns:
+            (是否可以, 错误信息)
+        """
+        if card_cost > current_mana:
+            return False, f"❌ 法力不足，需要{card_cost}点法力，当前只有{current_mana}点"
+
+        return True, ""
+
+    def can_use_hero_power(self, current_mana: int, hero_power_cost: int = 2) -> Tuple[bool, str]:
+        """
+        检查是否可以使用英雄技能
+
+        Args:
+            current_mana: 当前法力值
+            hero_power_cost: 英雄技能费用
+
+        Returns:
+            (是否可以, 错误信息)
+        """
+        if current_mana < hero_power_cost:
+            return False, f"❌ 法力不足，需要{hero_power_cost}点法力才能使用技能"
+
+        return True, ""
+
+    def get_command_help(self) -> str:
+        """获取命令帮助信息"""
+        help_text = """
+📋 可用命令：
+
+🃏 **出牌命令**：
+  • 出牌 <编号>   - 打出指定编号的卡牌
+  • play <编号>   - 英文出牌命令
+  • <编号>        - 直接输入数字出牌
+
+⚔️ **攻击命令**：
+  • 攻击 <我方随从> <敌方目标> - 命令随从攻击
+  • attack <我方随从> <敌方目标> - 英文攻击命令
+
+💪 **其他命令**：
+  • 技能 / skill - 使用英雄技能（消耗2法力）
+  • 结束回合 / end turn - 结束当前回合
+  • 帮助 / help / ? - 显示帮助信息
+  • 退出 / quit / exit - 退出游戏
+
+💡 **提示**：
+  • 卡牌编号见手牌区域
+  • 绿色✅表示可以出牌，红色❌表示法力不足
+  • 随从状态：🗡️可攻击，😴休眠中
+        """.strip()
+
+        return help_text
+
+    def format_error_message(self, error_type: str, details: str = "") -> str:
+        """
+        格式化错误消息
+
+        Args:
+            error_type: 错误类型
+            details: 错误详情
+
+        Returns:
+            格式化的错误消息
+        """
+        error_messages = {
+            'invalid_command': "❓ 未知命令，输入'help'查看帮助",
+            'invalid_card': f"❌ 无效的卡牌选择：{details}",
+            'invalid_attack': f"❌ 无效的攻击目标：{details}",
+            'insufficient_mana': f"❌ 法力不足：{details}",
+            'cannot_attack': f"❌ 无法攻击：{details}",
+            'game_error': f"❌ 游戏错误：{details}"
+        }
+
+        base_message = error_messages.get(error_type, "❌ 未知错误")
+
+        if details:
+            return f"{base_message}\n{details}"
+        return base_message
+
+    def format_success_message(self, action: str, details: str = "") -> str:
+        """
+        格式化成功消息
+
+        Args:
+            action: 动作类型
+            details: 详情
+
+        Returns:
+            格式化的成功消息
+        """
+        success_messages = {
+            'play_card': "✅ 成功打出卡牌",
+            'hero_power': "💪 成功使用英雄技能",
+            'attack': "⚔️ 攻击执行成功",
+            'end_turn': "🔄 回合结束"
+        }
+
+        base_message = success_messages.get(action, "✅ 操作成功")
+
+        if details:
+            return f"{base_message}：{details}"
+        return base_message
+
+
+# ============================================================================
+# 静态UI系统（禁用Live，避免无限循环）
+# ============================================================================
+
+class GameUIStatic:
+    """静态游戏UI系统 - 集成真正的游戏引擎"""
+
+    def __init__(self):
+        self.layout_manager = GameLayout()
+        self.game_state = {}
+        self._input_handler = UserInputHandler()
+        self.console = Console()
+
+        # 集成真正的游戏引擎
+        self.game_engine = None
+        self._initialize_game_engine()
+
+    def _initialize_game_engine(self):
+        """初始化真正的游戏引擎"""
+        try:
+            from game_engine.card_game import CardGame
+            from ai_engine.agents.ai_agent import AIAgent
+            from ai_engine.agents.agent_personality import PersonalityManager
+
+            # 创建AI对手
+            personality_manager = PersonalityManager()
+            profile = personality_manager.get_profile("adaptive_learner")
+
+            # 创建规则AI策略（简单稳定）
+            from ai_engine.strategies.rule_based import RuleBasedStrategy
+            strategy = RuleBasedStrategy("AI对手")
+
+            ai_agent = AIAgent("ai_opponent", profile, strategy)
+
+            # 创建游戏实例
+            self.game_engine = CardGame("玩家", "AI对手")
+            self.ai_agent = ai_agent
+
+            self.console.print("[dim]✅ 真正的游戏引擎已加载[/dim]")
+
+        except Exception as e:
+            self.console.print(f"[yellow]⚠️ 游戏引擎加载失败，使用模拟模式: {e}[/yellow]")
+            self.game_engine = None
+
+    def update_game_state(self, game_state: dict = None):
+        """更新游戏状态并静态渲染"""
+        # 如果有游戏引擎，从引擎获取真实状态
+        if self.game_engine:
+            self.game_state = self._convert_engine_state_to_ui_state()
+        elif game_state:
+            # 回退到手动提供的状态
+            self.game_state = game_state.copy()
+        else:
+            return
+
+        # 立即静态渲染一次
+        self._render_static_display()
+
+    def _convert_engine_state_to_ui_state(self) -> dict:
+        """将游戏引擎状态转换为UI状态"""
+        try:
+            if not self.game_engine:
+                return {}
+
+            # 获取玩家和AI状态
+            player = self.game_engine.players[0]  # 玩家
+            ai_player = self.game_engine.players[1]  # AI
+
+            # 转换手牌
+            hand = []
+            for i, card in enumerate(player.hand):
+                hand.append({
+                    "name": card.name if hasattr(card, 'name') else str(card),
+                    "cost": card.cost if hasattr(card, 'cost') else 0,
+                    "attack": card.attack if hasattr(card, 'attack') else 0,
+                    "health": card.health if hasattr(card, 'health') else 0,
+                    "type": card.card_type if hasattr(card, 'card_type') else "minion",
+                    "index": i
+                })
+
+            # 转换战场
+            battlefield = {
+                "player": [],
+                "opponent": []
+            }
+
+            # 玩家随从
+            for i, minion in enumerate(player.field):
+                battlefield["player"].append({
+                    "name": minion.name if hasattr(minion, 'name') else str(minion),
+                    "attack": minion.attack if hasattr(minion, 'attack') else 0,
+                    "health": minion.health if hasattr(minion, 'health') else 0,
+                    "can_attack": getattr(minion, 'can_attack', False),
+                    "index": i
+                })
+
+            # AI随从
+            for i, minion in enumerate(ai_player.field):
+                battlefield["opponent"].append({
+                    "name": minion.name if hasattr(minion, 'name') else str(minion),
+                    "attack": minion.attack if hasattr(minion, 'attack') else 0,
+                    "health": minion.health if hasattr(minion, 'health') else 0,
+                    "can_attack": getattr(minion, 'can_attack', False),
+                    "index": i
+                })
+
+            # 返回UI状态
+            return {
+                "player": {
+                    "health": player.health,
+                    "max_health": player.max_health,
+                    "mana": player.mana,
+                    "max_mana": player.max_mana,
+                    "hand_count": len(player.hand),
+                    "field_count": len(player.field)
+                },
+                "opponent": {
+                    "health": ai_player.health,
+                    "max_health": ai_player.max_health,
+                    "mana": ai_player.mana,
+                    "max_mana": ai_player.max_mana,
+                    "hand_count": len(ai_player.hand),
+                    "field_count": len(ai_player.field)
+                },
+                "hand": hand,
+                "battlefield": battlefield
+            }
+
+        except Exception as e:
+            self.console.print(f"[red]❌ 转换游戏状态失败: {e}[/red]")
+            return {}
+
+    def _render_static_display(self):
+        """静态渲染游戏状态"""
+        try:
+            self.console.clear()
+
+            # 渲染标题
+            self.console.print(Align.center(Text("🎮 Card Battle Arena Enhanced - 静态版", style="bold cyan")))
+            self.console.print()
+
+            # 渲染各个区域
+            if "player" in self.game_state:
+                player_panel = create_player_status_panel(self.game_state["player"])
+                self.console.print(player_panel)
+
+            if "battlefield" in self.game_state:
+                battlefield_component = create_battlefield_component(
+                    self.game_state["battlefield"].get("player", []),
+                    self.game_state["battlefield"].get("opponent", [])
+                )
+                self.console.print(battlefield_component)
+
+            if "hand" in self.game_state and "player" in self.game_state:
+                hand_table = create_hand_cards_table(
+                    self.game_state["hand"],
+                    self.game_state["player"].get("mana", 0)
+                )
+                self.console.print(hand_table)
+
+            if "opponent" in self.game_state:
+                opponent_panel = create_opponent_status_panel(self.game_state["opponent"])
+                self.console.print(opponent_panel)
+
+            # 渲染命令区域
+            available_commands = self._get_available_commands(self.game_state)
+            command_panel = create_command_panel(available_commands)
+            self.console.print(command_panel)
+
+        except Exception as e:
+            self.console.print(f"[red]❌ 静态渲染失败: {e}[/red]")
+
+    def _get_available_commands(self, game_state: dict) -> list:
+        """根据游戏状态获取可用命令（带数字选项）"""
+        commands = []
+
+        if "player" in game_state:
+            player = game_state["player"]
+            mana = player.get("mana", 0)
+
+            # 检查是否有可出的卡牌
+            if "hand" in game_state:
+                playable_cards = [
+                    card for card in game_state["hand"]
+                    if card.get("cost", 0) <= mana
+                ]
+                for i, card in enumerate(playable_cards):
+                    card_name = card.get("name", "未知卡牌")
+                    commands.append(f"{i+1}. 出牌 {card_name} (费用{card.get('cost', 0)})")
+
+            # 检查是否可以使用英雄技能
+            if mana >= 2:
+                commands.append(f"{len(commands)+1}. 使用英雄技能 (2法力)")
+
+        # 添加固定命令
+        commands.append(f"{len(commands)+1}. 结束回合")
+        commands.append(f"{len(commands)+1}. 查看帮助")
+        commands.append(f"{len(commands)+1}. 游戏设置")
+        commands.append(f"{len(commands)+1}. 退出游戏")
+
+        return commands
+
+    async def process_user_input(self, input_str: str) -> Tuple[bool, str, Optional[dict]]:
+        """处理用户输入（支持数字选项）"""
+        input_str = input_str.strip()
+
+        # 尝试数字选项处理
+        if input_str.isdigit():
+            return await self._handle_number_choice(int(input_str))
+
+        # 解析命令
+        success, command_data = self._input_handler.parse_command(input_str)
+
+        if not success:
+            error_msg = self._input_handler.format_error_message('invalid_command')
+            return False, error_msg, None
+
+        command_type, params = command_data
+
+        # 根据命令类型处理
+        if command_type == 'help':
+            help_text = self._input_handler.get_command_help()
+            return True, help_text, None
+
+        elif command_type == 'quit':
+            return True, "👋 游戏已退出", {'action': 'quit'}
+
+        elif command_type == 'play_card':
+            return await self._handle_play_card(params)
+
+        elif command_type == 'hero_power':
+            return await self._handle_hero_power()
+
+        elif command_type == 'attack':
+            return await self._handle_attack(params)
+
+        elif command_type == 'end_turn':
+            return await self._handle_end_turn()
+
+        else:
+            error_msg = self._input_handler.format_error_message('invalid_command', f"未知命令类型: {command_type}")
+            return False, error_msg, None
+
+    async def _handle_number_choice(self, choice: int) -> Tuple[bool, str, Optional[dict]]:
+        """处理数字选择"""
+        commands = self._get_available_commands(self.game_state)
+
+        if choice < 1 or choice > len(commands):
+            return False, f"❌ 无效选择，请输入1-{len(commands)}之间的数字", None
+
+        selected_command = commands[choice - 1]
+
+        # 解析选择的命令
+        if "出牌" in selected_command:
+            # 找到对应的卡牌索引
+            playable_cards = [
+                card for card in self.game_state.get("hand", [])
+                if card.get("cost", 0) <= self.game_state.get("player", {}).get("mana", 0)
+            ]
+            card_commands = [cmd for cmd in commands if "出牌" in cmd]
+            card_index = card_commands.index(selected_command)
+            if card_index < len(playable_cards):
+                actual_card_index = self.game_state["hand"].index(playable_cards[card_index])
+                return await self._handle_play_card(actual_card_index)
+
+        elif "英雄技能" in selected_command:
+            return await self._handle_hero_power()
+
+        elif "结束回合" in selected_command:
+            return await self._handle_end_turn()
+
+        elif "帮助" in selected_command:
+            help_text = self._input_handler.get_command_help()
+            return True, help_text, None
+
+        elif "设置" in selected_command:
+            return True, "⚙️ 游戏设置功能开发中...", None
+
+        elif "退出" in selected_command:
+            return True, "👋 游戏已退出", {'action': 'quit'}
+
+        return False, f"❌ 无法处理命令: {selected_command}", None
+
+    async def _handle_play_card(self, card_index: int) -> Tuple[bool, str, Optional[dict]]:
+        """处理出牌命令"""
+        if not self.game_state or 'hand' not in self.game_state:
+            return False, "❌ 游戏状态未初始化", None
+
+        # 检查手牌是否存在
+        hand_cards = self.game_state.get('hand', [])
+        if card_index >= len(hand_cards):
+            max_index = len(hand_cards) - 1
+            if max_index < 0:
+                return False, "❌ 没有可出的手牌", None
+            error_msg = self._input_handler.format_error_message('invalid_card', f"请选择0-{max_index}之间的卡牌")
+            return False, error_msg, None
+
+        # 检查卡牌是否可以出
+        card = hand_cards[card_index]
+        card_cost = card.get('cost', 0)
+        current_mana = self.game_state.get('player', {}).get('mana', 0)
+
+        can_play, error_msg = self._input_handler.can_play_card(card_cost, current_mana)
+        if not can_play:
+            return False, error_msg, None
+
+        # 返回出牌动作
+        card_name = card.get('name', '未知卡牌')
+        success_msg = self._input_handler.format_success_message('play_card', card_name)
+        return True, success_msg, {'action': 'play_card', 'card_index': card_index, 'card': card}
+
+    async def _handle_hero_power(self) -> Tuple[bool, str, Optional[dict]]:
+        """处理英雄技能命令"""
+        if not self.game_state or 'player' not in self.game_state:
+            return False, "❌ 游戏状态未初始化", None
+
+        current_mana = self.game_state.get('player', {}).get('mana', 0)
+        can_use, error_msg = self._input_handler.can_use_hero_power(current_mana)
+        if not can_use:
+            return False, error_msg, None
+
+        success_msg = self._input_handler.format_success_message('hero_power')
+        return True, success_msg, {'action': 'hero_power'}
+
+    async def _handle_attack(self, attack_params: Tuple[int, int]) -> Tuple[bool, str, Optional[dict]]:
+        """处理攻击命令"""
+        if not self.game_state or 'battlefield' not in self.game_state:
+            return False, "❌ 游戏状态未初始化", None
+
+        attacker_index, target_index = attack_params
+
+        # 检查战场状态
+        battlefield = self.game_state.get('battlefield', {})
+        player_field = battlefield.get('player', [])
+        opponent_field = battlefield.get('opponent', [])
+
+        # 验证攻击者索引
+        if attacker_index >= len(player_field):
+            max_attacker = len(player_field) - 1
+            if max_attacker < 0:
+                return False, "❌ 你没有可攻击的随从", None
+            error_msg = self._input_handler.format_error_message('invalid_attack', f"请选择0-{max_attacker}之间的我方随从")
+            return False, error_msg, None
+
+        # 验证目标索引（可以攻击对手随从或英雄）
+        max_target = len(opponent_field)  # 随从数量
+        if target_index > max_target:  # 最后一个是英雄
+            if max_target < 0:
+                max_target = 0  # 只有英雄
+            error_msg = self._input_handler.format_error_message('invalid_attack', f"请选择0-{max_target}之间的敌方目标")
+            return False, error_msg, None
+
+        # 检查攻击者是否可以攻击
+        attacker = player_field[attacker_index]
+        can_attack = attacker.get('can_attack', False)
+        if not can_attack:
+            attacker_name = attacker.get('name', '随从')
+            error_msg = self._input_handler.format_error_message('cannot_attack', f"{attacker_name}当前无法攻击（可能刚上场或已攻击过）")
+            return False, error_msg, None
+
+        # 确定攻击目标
+        is_attacking_hero = target_index == len(opponent_field)
+        target_info = {'type': 'hero'} if is_attacking_hero else {'type': 'minion', 'index': target_index, 'minion': opponent_field[target_index]}
+
+        attacker_name = attacker.get('name', '随从')
+        target_name = '敌方英雄' if is_attacking_hero else opponent_field[target_index].get('name', '随从')
+
+        success_msg = self._input_handler.format_success_message('attack', f"{attacker_name} 攻击 {target_name}")
+        return True, success_msg, {
+            'action': 'attack',
+            'attacker_index': attacker_index,
+            'attacker': attacker,
+            'target': target_info
+        }
+
+    async def _handle_end_turn(self) -> Tuple[bool, str, Optional[dict]]:
+        """处理结束回合命令"""
+        success_msg = self._input_handler.format_success_message('end_turn')
+        return True, success_msg, {'action': 'end_turn'}
+
+    async def interactive_game_loop(self):
+        """交互式游戏循环（静态版本）"""
+        self.console.print("\n🎮 [bold green]游戏开始！[/bold green]")
+        self.console.print("💡 [yellow]提示：输入数字选择命令，或输入文字命令（如：help、quit等）[/yellow]")
+        self.console.print("=" * 50)
+
+        from rich.prompt import Prompt
+
+        try:
+            while True:
+                # 获取用户输入
+                try:
+                    user_input = Prompt.ask("\n[bold cyan]请输入命令[/bold cyan]", default="", show_default=False)
+                except KeyboardInterrupt:
+                    user_input = "quit"
+
+                if not user_input.strip():
+                    continue
+
+                # 处理用户输入
+                success, message, action_data = await self.process_user_input(user_input)
+
+                # 显示处理结果
+                if success:
+                    if action_data and action_data.get('action') == 'quit':
+                        self.console.print(message)
+                        break
+                    else:
+                        self.console.print(f"[green]{message}[/green]")
+
+                        # 执行动作并更新游戏状态
+                        if action_data:
+                            await self._execute_action_and_update_state(action_data)
+
+                        # 重新渲染界面
+                        self._render_static_display()
+                else:
+                    self.console.print(f"[red]{message}[/red]")
+
+        except Exception as e:
+            self.console.print(f"[red]❌ 游戏循环出错: {e}[/red]")
+
+    async def _execute_action_and_update_state(self, action_data: dict):
+        """执行动作并更新游戏状态"""
+        action = action_data.get('action')
+
+        if action == 'play_card':
+            await self._handle_card_played(action_data)
+
+        elif action == 'hero_power':
+            await self._handle_hero_power_used(action_data)
+
+        elif action == 'attack':
+            await self._handle_attack_executed(action_data)
+
+        elif action == 'end_turn':
+            await self._handle_turn_ended(action_data)
+
+    async def _handle_card_played(self, action_data: dict):
+        """处理卡牌打出并更新状态"""
+        card_index = action_data.get('card_index')
+        card = action_data.get('card')
+
+        if self.game_engine:
+            # 使用真正的游戏引擎
+            try:
+                result = self.game_engine.play_card(0, card_index)  # 0是玩家索引
+                if result["success"]:
+                    self.console.print(f"[green]✅ {result['message']}[/green]")
+
+                    # 立即更新状态
+                    self.update_game_state()
+                else:
+                    self.console.print(f"[red]❌ 出牌失败: {result['message']}[/red]")
+            except Exception as e:
+                self.console.print(f"[red]❌ 游戏引擎出牌出错: {e}[/red]")
+        else:
+            # 回退到模拟模式
+            await self._simulate_card_played(card_index, card)
+
+    async def _handle_hero_power_used(self, action_data: dict):
+        """处理英雄技能使用并更新状态"""
+        # 更新玩家状态 - 减少2点法力
+        if 'player' in self.game_state:
+            self.game_state['player']['mana'] -= 2
+
+        await asyncio.sleep(0.5)
+        self.console.print("[dim]💪 英雄技能已使用[/dim]")
+
+    async def _handle_attack_executed(self, action_data: dict):
+        """处理攻击执行并更新状态"""
+        await asyncio.sleep(0.5)
+        self.console.print("[dim]⚔️ 攻击已执行[/dim]")
+
+    async def _handle_turn_ended(self, action_data: dict):
+        """处理回合结束并让AI行动"""
+        if self.game_engine:
+            # 使用真正的游戏引擎
+            try:
+                result = self.game_engine.end_turn(0, auto_attack=True)
+                if result["success"]:
+                    self.console.print(f"[green]✅ {result['message']}[/green]")
+
+                    # AI自动行动
+                    await self._ai_engine_turn()
+                else:
+                    self.console.print(f"[red]❌ 结束回合失败: {result['message']}[/red]")
+            except Exception as e:
+                self.console.print(f"[red]❌ 游戏引擎结束回合出错: {e}[/red]")
+        else:
+            # 回退到模拟模式
+            await self._simulate_turn_ended(action_data)
+
+    async def _ai_turn(self):
+        """AI对手回合"""
+        self.console.print("[dim]🤖 AI正在思考...[/dim]")
+        await asyncio.sleep(1)
+
+        # AI出牌逻辑
+        if 'opponent' in self.game_state:
+            opponent_mana = self.game_state['opponent'].get('mana', 0)
+            opponent_hand = self.game_state.get('opponent_hand', [])
+
+            # 如果AI有手牌且法力足够，尝试出牌
+            if opponent_hand and opponent_mana >= 1:
+                # 找出AI能出的最便宜的牌
+                playable_cards = [
+                    card for card in opponent_hand
+                    if card.get('cost', 0) <= opponent_mana
+                ]
+
+                if playable_cards:
+                    # AI出最便宜的牌
+                    ai_card = min(playable_cards, key=lambda x: x.get('cost', 0))
+                    card_cost = ai_card.get('cost', 0)
+
+                    # 更新AI状态
+                    self.game_state['opponent']['mana'] -= card_cost
+                    self.game_state['opponent']['hand_count'] = len(opponent_hand) - 1
+
+                    # 如果是随从，添加到战场
+                    if ai_card.get('type') == 'minion':
+                        if 'battlefield' not in self.game_state:
+                            self.game_state['battlefield'] = {'player': [], 'opponent': []}
+
+                        battlefield_minion = {
+                            'name': ai_card.get('name'),
+                            'attack': ai_card.get('attack'),
+                            'health': ai_card.get('health'),
+                            'can_attack': False,
+                            'index': len(self.game_state['battlefield']['opponent'])
+                        }
+                        self.game_state['battlefield']['opponent'].append(battle_minion)
+                        self.game_state['opponent']['field_count'] = len(self.game_state['battlefield']['opponent'])
+
+                    card_name = ai_card.get('name')
+                    self.console.print(f"[dim]🤖 AI打出了 {card_name}[/dim]")
+                else:
+                    self.console.print("[dim]🤖 AI没有可出的牌[/dim]")
+
+        # AI结束回合
+        await asyncio.sleep(0.5)
+        self.console.print("[dim]🤖 AI结束回合[/dim]")
+
+        # 新回合开始 - 双方法力增长
+        if 'player' in self.game_state and self.game_state['player']['max_mana'] < 10:
+            self.game_state['player']['max_mana'] += 1
+            self.game_state['player']['mana'] = self.game_state['player']['max_mana']
+
+        if 'opponent' in self.game_state and self.game_state['opponent']['max_mana'] < 10:
+            self.game_state['opponent']['max_mana'] += 1
+            self.game_state['opponent']['mana'] = self.game_state['opponent']['max_mana']
+
+        self.console.print("[green]✅ 第{self.game_state['player']['max_mana']}回合开始！[/green]")
+
+    async def _simulate_card_played(self, card_index: int, card: dict):
+        """模拟卡牌打出（回退模式）"""
+        # 更新手牌 - 移除打出的卡牌
+        if 'hand' in self.game_state and card_index < len(self.game_state['hand']):
+            # 重新索引手牌
+            self.game_state['hand'] = [
+                {**card, 'index': i}
+                for i, card in enumerate(self.game_state['hand'])
+                if card.get('index') != card_index
+            ]
+
+        # 更新玩家状态 - 减少法力值
+        if 'player' in self.game_state:
+            card_cost = card.get('cost', 0)
+            self.game_state['player']['mana'] -= card_cost
+            self.game_state['player']['hand_count'] = len(self.game_state.get('hand', []))
+
+        # 如果是随从牌，添加到战场
+        if card.get('type') == 'minion':
+            if 'battlefield' not in self.game_state:
+                self.game_state['battlefield'] = {'player': [], 'opponent': []}
+
+            # 添加随从到玩家战场
+            battlefield_minion = {
+                'name': card.get('name'),
+                'attack': card.get('attack'),
+                'health': card.get('health'),
+                'can_attack': False,  # 刚上场的随从不能攻击
+                'index': len(self.game_state['battlefield']['player'])
+            }
+            self.game_state['battlefield']['player'].append(battlefield_minion)
+
+            # 更新玩家状态
+            self.game_state['player']['field_count'] = len(self.game_state['battlefield']['player'])
+
+        await asyncio.sleep(0.5)
+        self.console.print(f"[dim]✅ {card.get('name')} 已添加到战场[/dim]")
+
+    async def _simulate_turn_ended(self, action_data: dict):
+        """模拟回合结束（回退模式）"""
+        await asyncio.sleep(0.5)
+        self.console.print("[dim]🔄 玩家回合结束[/dim]")
+
+        # AI对手行动
+        await self._ai_turn()
+
+    async def _ai_engine_turn(self):
+        """AI引擎回合（使用真正的AI）"""
+        if not self.game_engine or not self.ai_agent:
+            return
+
+        try:
+            self.console.print("[dim]🤖 AI正在思考...[/dim]")
+            await asyncio.sleep(1)
+
+            # 让AI执行决策
+            current_ai = self.game_engine.players[1]  # AI玩家
+
+            # AI决策和执行
+            while not self.game_engine.game_over and self.game_engine.current_player_idx == 1:
+                # 获取AI决策
+                action = self.ai_agent.decide_action(current_ai, self.game_engine)
+
+                if action:
+                    # 执行AI动作
+                    from main import execute_ai_action
+                    result = execute_ai_action(action, 1, self.game_engine, self.ai_agent)
+
+                    if result["success"]:
+                        self.console.print(f"[dim]🤖 {result['message']}[/dim]")
+                        # 每次动作后短暂延迟，让AI可以继续决策
+                        await asyncio.sleep(0.5)
+                    else:
+                        self.console.print(f"[dim]⚠️ AI动作失败: {result['message']}[/dim]")
+                        # 动作失败，尝试结束回合
+                        break
+                else:
+                    # AI没有合适的动作，结束回合
+                    break
+
+            # 确保AI结束自己的回合
+            if not self.game_engine.game_over and self.game_engine.current_player_idx == 1:
+                end_result = self.game_engine.end_turn(1, auto_attack=True)
+                if end_result["success"]:
+                    self.console.print(f"[dim]🤖 AI结束回合[/dim]")
+
+            # 检查游戏是否结束
+            if self.game_engine.game_over:
+                winner = self.game_engine.get_winner()
+                self.console.print(f"\n[bold yellow]🎮 游戏结束！{winner}获胜！[/bold yellow]")
+            else:
+                self.console.print("[green]✅ 轮到你的回合！[/green]")
+
+        except Exception as e:
+            self.console.print(f"[red]❌ AI回合执行出错: {e}[/red]")
+            # 回退到模拟AI
+            await self._ai_turn()
+
+    def stop_rendering(self):
+        """停止渲染（静态版本，无需特殊操作）"""
+        pass
+
+
+# ============================================================================
+# TDD测试入口
+# ============================================================================
+
 if __name__ == "__main__":
     ui = GameUI()
     ui.show_welcome_animation()

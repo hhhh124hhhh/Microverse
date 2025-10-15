@@ -116,34 +116,94 @@ def display_game_state(context: GameContext):
 
     table.add_row("生命值", f"{context.player_health}/{context.player_max_health}",
                   f"{context.opponent_health}/{context.opponent_max_health}")
-    table.add_row("法力值", f"{context.player_mana}/{context.player_max_mana}",
-                  f"{context.opponent_mana}/{context.opponent_max_mana}")
+
+    # 法力值用颜色突出显示
+    player_mana_ratio = context.player_mana / max(1, context.player_max_mana)
+    opponent_mana_ratio = context.opponent_mana / max(1, context.opponent_max_mana)
+
+    if player_mana_ratio >= 0.8:
+        player_mana_style = "bold green"
+    elif player_mana_ratio >= 0.5:
+        player_mana_style = "bold yellow"
+    else:
+        player_mana_style = "red"
+
+    if opponent_mana_ratio >= 0.8:
+        opponent_mana_style = "bold green"
+    elif opponent_mana_ratio >= 0.5:
+        opponent_mana_style = "bold yellow"
+    else:
+        opponent_mana_style = "red"
+
+    table.add_row("法力值",
+                  f"[{player_mana_style}]{context.player_mana}/{context.player_max_mana}[/{player_mana_style}]",
+                  f"[{opponent_mana_style}]{context.opponent_mana}/{context.opponent_max_mana}[/{opponent_mana_style}]")
     table.add_row("手牌数量", str(len(context.player_hand)), str(context.opponent_hand_size))
     table.add_row("场面随从", str(len(context.player_field)), str(len(context.opponent_field)))
     table.add_row("牌库数量", str(context.player_deck_size), str(context.opponent_deck_size))
 
     console.print(table)
 
+    # 添加法力值使用情况面板
+    if context.player_hand:
+        playable_cards = sum(1 for card in context.player_hand if card.get("cost", 0) <= context.player_mana)
+        total_cards = len(context.player_hand)
+
+        # 计算平均手牌费用
+        avg_cost = sum(card.get("cost", 0) for card in context.player_hand) / max(1, total_cards)
+
+        mana_info = f"💰 [bold cyan]法力值分析:[/bold cyan]\n"
+        mana_info += f"   可出牌: [green]{playable_cards}/{total_cards}[/green] 张\n"
+        mana_info += f"   平均费用: [yellow]{avg_cost:.1f}[/yellow]\n"
+
+        # 显示最大可出的费用
+        max_playable_cost = max([card.get("cost", 0) for card in context.player_hand
+                                if card.get("cost", 0) <= context.player_mana], default=0)
+        if max_playable_cost > 0:
+            mana_info += f"   最大可出: [bold green]{max_playable_cost}[/bold green] 费用牌"
+
+        console.print(Panel(mana_info.strip(), title="法力值状态", border_style="cyan"))
+
     # 显示手牌
     if context.player_hand:
         hand_table = Table(title="🃏 我方手牌", show_header=True, header_style="bold blue")
-        hand_table.add_column("名称", style="white")
-        hand_table.add_column("费用", style="yellow")
-        hand_table.add_column("攻击", style="red")
-        hand_table.add_column("生命", style="green")
-        hand_table.add_column("类型", style="cyan")
-        hand_table.add_column("关键词", style="magenta")
+        hand_table.add_column("名称", style="white", width=20)
+        hand_table.add_column("费用", style="bold yellow", width=6, justify="center")
+        hand_table.add_column("攻击", style="red", width=6, justify="center")
+        hand_table.add_column("生命", style="green", width=6, justify="center")
+        hand_table.add_column("类型", style="cyan", width=8)
+        hand_table.add_column("关键词", style="magenta", width=12)
 
-        for card in context.player_hand:
+        # 按费用排序手牌，让高费用牌更明显
+        sorted_hand = sorted(context.player_hand, key=lambda x: x.get("cost", 0), reverse=True)
+
+        for i, card in enumerate(sorted_hand):
             mechanics = ", ".join(card.get("mechanics", [])) if card.get("mechanics") else "无"
             attack = str(card.get("attack", "")) if "attack" in card else ""
             health = str(card.get("health", "")) if "health" in card else ""
+            cost = card.get("cost", 0)
+
+            # 高亮显示法力值消耗，使用不同的颜色表示费用高低
+            cost_style = "bold yellow"
+            if cost >= 7:
+                cost_style = "bold red"  # 高费用用红色
+            elif cost >= 5:
+                cost_style = "bold magenta"  # 中高费用用紫色
+            elif cost <= 2:
+                cost_style = "bold green"  # 低费用用绿色
+
+            # 可出牌的手牌用特殊标记
+            name_prefix = ""
+            if cost <= context.player_mana:
+                name_prefix = "✅ "  # 可出的牌
+            else:
+                name_prefix = "❌ "  # 不可出的牌
 
             hand_table.add_row(
-                card.get("name", "未知"),
-                str(card.get("cost", 0)),
-                attack,
-                health,
+                f"{name_prefix}{card.get('name', '未知')}",
+                f"[{cost_style}]{cost}[/{cost_style}]",
+                f"[red]{attack}[/red]" if attack else "",
+                f"[green]{health}[/green]" if health else "",
                 card.get("card_type", "未知"),
                 mechanics
             )
@@ -153,38 +213,74 @@ def display_game_state(context: GameContext):
     # 显示场面
     if context.player_field or context.opponent_field:
         field_table = Table(title="⚔️ 战场", show_header=True, header_style="bold yellow")
-        field_table.add_column("阵营", style="white")
-        field_table.add_column("名称", style="white")
-        field_table.add_column("攻击", style="red")
-        field_table.add_column("生命", style="green")
-        field_table.add_column("可攻击", style="yellow")
-        field_table.add_column("关键词", style="magenta")
+        field_table.add_column("阵营", style="white", width=8)
+        field_table.add_column("名称", style="white", width=16)
+        field_table.add_column("攻击", style="red", width=6, justify="center")
+        field_table.add_column("生命", style="green", width=6, justify="center")
+        field_table.add_column("费用", style="yellow", width=6, justify="center")
+        field_table.add_column("状态", style="cyan", width=8)
+        field_table.add_column("关键词", style="magenta", width=12)
 
         # 我方场面
         for minion in context.player_field:
             mechanics = ", ".join(minion.get("mechanics", [])) if minion.get("mechanics") else "无"
-            can_attack = "✅" if minion.get("can_attack", False) else "❌"
+            can_attack = minion.get("can_attack", False)
+            cost = minion.get("cost", 0)  # 显示随从的原始费用
+
+            # 状态显示更详细
+            status = ""
+            if can_attack:
+                status = "🗡️可攻"
+            else:
+                status = "😴休眠"
+
+            # 高亮显示高攻击力或高血量的随从
+            attack = minion.get("attack", 0)
+            health = minion.get("health", 0)
+            attack_style = "bold red" if attack >= 5 else "red"
+            health_style = "bold green" if health >= 5 else "green"
 
             field_table.add_row(
-                "我方",
+                "[green]我方[/green]",
                 minion.get("name", "未知"),
-                str(minion.get("attack", 0)),
-                str(minion.get("health", 0)),
-                can_attack,
+                f"[{attack_style}]{attack}[/{attack_style}]",
+                f"[{health_style}]{health}[/{health_style}]",
+                f"[yellow]{cost}[/yellow]" if cost > 0 else "-",
+                status,
                 mechanics
             )
 
         # 对手场面
         for minion in context.opponent_field:
             mechanics = ", ".join(minion.get("mechanics", [])) if minion.get("mechanics") else "无"
-            can_attack = "✅" if minion.get("can_attack", False) else "❌"
+            can_attack = minion.get("can_attack", False)
+            cost = minion.get("cost", 0)
+
+            # 状态显示
+            status = ""
+            if can_attack:
+                status = "⚠️威胁"
+            else:
+                status = "😴休眠"
+
+            # 对手随从用不同颜色标记威胁程度
+            attack = minion.get("attack", 0)
+            health = minion.get("health", 0)
+
+            # 根据威胁程度使用不同颜色
+            threat_style = "red"
+            if attack >= 5:
+                threat_style = "bold red"  # 高威胁
+            elif attack >= 3:
+                threat_style = "yellow"   # 中等威胁
 
             field_table.add_row(
-                "对手",
+                "[red]对手[/red]",
                 minion.get("name", "未知"),
-                str(minion.get("attack", 0)),
-                str(minion.get("health", 0)),
-                can_attack,
+                f"[{threat_style}]{attack}[/{threat_style}]",
+                f"[{threat_style}]{health}[/{threat_style}]",
+                f"[yellow]{cost}[/yellow]" if cost > 0 else "-",
+                status,
                 mechanics
             )
 
