@@ -1469,13 +1469,22 @@ def create_hand_cards_table(hand_cards: list, current_mana: int):
         cost = str(card.get("cost", 0))
         card_type = card.get("type", "未知")
 
-        # 计算属性显示
+        # 修复：正确计算属性显示，包括法术威力
         if card_type == "minion":
             attack = card.get("attack", 0)
             health = card.get("health", 0)
             attributes = f"{attack}/{health}"
+        elif card_type == "spell":
+            # 修复：正确显示法术威力
+            attack = card.get("attack", 0)
+            if attack > 0:
+                attributes = f"🔥{attack}"  # 伤害法术
+            elif attack < 0:
+                attributes = f"💚{-attack}"  # 治疗法术
+            else:
+                attributes = "✨"  # 其他法术
         else:
-            attributes = "法术"
+            attributes = "未知"
 
         # 判断可出性
         is_playable = card.get("cost", 0) <= current_mana
@@ -1797,18 +1806,34 @@ class GameUIStatic:
         """初始化真正的游戏引擎"""
         try:
             from game_engine.card_game import CardGame
-            from ai_engine.agents.ai_agent import AIAgent
+            from ai_engine.agents.fixed_ai_agent import FixedAIAgent
             from ai_engine.agents.agent_personality import PersonalityManager
 
             # 创建AI对手
             personality_manager = PersonalityManager()
             profile = personality_manager.get_profile("adaptive_learner")
 
+            # 如果没有找到指定的人格，使用默认人格
+            if not profile:
+                from ai_engine.agents.agent_personality import PersonalityProfile, PlayStyle
+                profile = PersonalityProfile(
+                    name="回退AI",
+                    description="简单的回退AI",
+                    traits=[],
+                    play_style=PlayStyle.MIDRANGE,
+                    risk_tolerance=0.5,
+                    aggression_level=0.5,
+                    patience_level=0.5,
+                    thinking_time_range=(0.1, 0.5),
+                    emotion_factor=0.5,
+                    learning_rate=0.1
+                )
+
             # 创建规则AI策略（简单稳定）
             from ai_engine.strategies.rule_based import RuleBasedStrategy
             strategy = RuleBasedStrategy("AI对手")
 
-            ai_agent = AIAgent("ai_opponent", profile, strategy)
+            ai_agent = FixedAIAgent("ai_opponent", profile, strategy)
 
             # 创建游戏实例
             self.game_engine = CardGame("玩家", "AI对手")
@@ -2397,10 +2422,12 @@ class GameUIStatic:
                 if action:
                     # 执行AI动作
                     from main import execute_ai_action
-                    result = execute_ai_action(action, 1, self.game_engine, self.ai_agent)
+                    result = await execute_ai_action(action, self.game_engine, 1)
 
                     if result["success"]:
                         self.console.print(f"[dim]🤖 {result['message']}[/dim]")
+                        # 立即更新UI状态以显示AI的动作结果
+                        self.update_game_state()
                         # 每次动作后短暂延迟，让AI可以继续决策
                         await asyncio.sleep(0.5)
                     else:

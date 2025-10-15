@@ -5,13 +5,14 @@
 from typing import Dict, List, Any, Optional, Tuple
 import time
 import random
+import asyncio
 from .base import AIStrategy, AIAction, ActionType, GameContext, AIStrategyError
 
 
 class RuleBasedStrategy(AIStrategy):
     """基于规则的AI策略"""
 
-    def __init__(self, name: str = "规则AI", config: Dict[str, Any] = None):
+    def __init__(self, name: str = "规则AI", config: Optional[Dict[str, Any]] = None):
         default_config = {
             "mana_curve_preference": 0.7,  # 法力曲线偏好
             "board_control_weight": 0.8,   # 场面控制权重

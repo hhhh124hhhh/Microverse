@@ -164,14 +164,24 @@ async def execute_ai_action(action, game: CardGame, ai_player_idx: int = 1) -> D
         if suggested_card:
             suggested_name = get_card_name(suggested_card)
             for i, card in enumerate(current.hand):
-                if get_card_name(card) == suggested_name and current.can_play_card(card):
-                    playable_cards.append((i, card, "AI推荐"))
-                    break
+                if get_card_name(card) == suggested_name:
+                    # 处理字典格式的卡牌
+                    if isinstance(card, dict):
+                        if card.get("cost", 0) <= current.mana:
+                            playable_cards.append((i, card, "AI推荐"))
+                            break
+                    elif current.can_play_card(card):
+                        playable_cards.append((i, card, "AI推荐"))
+                        break
 
         # 如果没有找到AI推荐的卡牌，或者AI没有推荐，找出所有可出的牌
         if not playable_cards:
             for i, card in enumerate(current.hand):
-                if current.can_play_card(card):
+                # 处理字典格式的卡牌
+                if isinstance(card, dict):
+                    if card.get("cost", 0) <= current.mana:
+                        playable_cards.append((i, card, "可用"))
+                elif current.can_play_card(card):
                     playable_cards.append((i, card, "可用"))
 
         if playable_cards:
@@ -256,8 +266,10 @@ async def execute_ai_action(action, game: CardGame, ai_player_idx: int = 1) -> D
 
                 if attacker_idx is not None:
                     if isinstance(target, str) and "英雄" in target:
-                        result = game.attack_with_hero(ai_player_idx)
+                        # 随从攻击英雄
+                        result = game.attack_with_minion(ai_player_idx, attacker_idx, "英雄")
                     else:
+                        # 随从攻击其他随从
                         target_name = get_card_name(target) if target else "随从0"
                         result = game.attack_with_minion(ai_player_idx, attacker_idx, target_name)
 

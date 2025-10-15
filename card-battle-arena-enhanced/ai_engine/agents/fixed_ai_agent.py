@@ -1,6 +1,6 @@
 """
-AI代理实现
-集成人格系统、学习能力和决策引擎的完整AI代理
+修复版AI代理实现
+专门解决AI卡住的问题
 """
 import asyncio
 import time
@@ -98,8 +98,8 @@ class AgentMemory:
         return time_weighted_score / max(1, total_weight)
 
 
-class AIAgent:
-    """AI代理"""
+class FixedAIAgent:
+    """修复版AI代理，解决卡住问题"""
 
     def __init__(self, agent_id: str, personality: PersonalityProfile,
                  ai_strategy: AIStrategy, llm_manager: Optional[LLMManager] = None):
@@ -137,7 +137,75 @@ class AIAgent:
                 # 如果策略没有set_llm_manager方法或调用失败，则忽略
                 pass
 
-        logger.info(f"AI代理 {agent_id} ({personality.name}) 初始化完成")
+        logger.info(f"修复版AI代理 {agent_id} ({personality.name}) 初始化完成")
+
+    def decide_action(self, player, game_engine):
+        """
+        决策动作（兼容旧接口）
+        修复版本，解决卡住问题
+        
+        Args:
+            player: 当前玩家对象
+            game_engine: 游戏引擎对象
+            
+        Returns:
+            AIAction: AI决策的动作
+        """
+        # 创建游戏上下文
+        context = self._create_context_from_game(player, game_engine)
+        
+        # 检查是否已经在异步事件循环中
+        try:
+            # 尝试获取当前事件循环
+            current_loop = asyncio.get_running_loop()
+            # 如果能获取到，说明已经在异步环境中
+            import warnings
+            warnings.warn("检测到已在异步环境中运行，使用create_task")
+            # 在已有事件循环中运行
+            import concurrent.futures
+            with concurrent.futures.ThreadPoolExecutor() as executor:
+                future = executor.submit(self._sync_make_decision, context)
+                return future.result(timeout=5.0)
+        except RuntimeError:
+            # 没有运行的事件循环，可以安全创建新的
+            try:
+                # 设置5秒超时
+                result = asyncio.run(
+                    asyncio.wait_for(self.make_decision(context), timeout=5.0)
+                )
+                return result
+            except asyncio.TimeoutError:
+                logger.warning("AI决策超时，使用回退策略")
+                # 超时时使用规则AI作为回退
+                rule_strategy = RuleBasedStrategy("回退规则AI")
+                return asyncio.run(
+                    asyncio.wait_for(rule_strategy.execute_with_timing(context), timeout=2.0)
+                )
+                
+        except Exception as e:
+            logger.error(f"AI决策失败: {e}")
+            # 出现任何错误时，返回结束回合动作
+            return AIAction(
+                action_type=ActionType.END_TURN,
+                confidence=0.3,
+                reasoning=f"决策失败: {str(e)}",
+                parameters={}
+            )
+
+    def _sync_make_decision(self, context: GameContext) -> Optional[AIAction]:
+        """同步版本的决策方法，用于在线程池中运行"""
+        # 创建新的事件循环来运行异步决策
+        try:
+            result = asyncio.run(self.make_decision(context))
+            return result
+        except Exception as e:
+            logger.error(f"同步AI决策失败: {e}")
+            return AIAction(
+                action_type=ActionType.END_TURN,
+                confidence=0.3,
+                reasoning=f"同步决策失败: {str(e)}",
+                parameters={}
+            )
 
     async def make_decision(self, context: GameContext) -> Optional[AIAction]:
         """
@@ -162,7 +230,7 @@ class AIAgent:
             # 5. 记录决策
             self._record_decision(context, final_action, time.time() - start_time)
 
-            # 6. 模拟思考时间
+            # 6. 模拟思考时间（限制在1秒内）
             await self._simulate_thinking()
 
             if final_action:
@@ -180,29 +248,15 @@ class AIAgent:
         # 使用 getattr 安全地访问属性
         danger_level = 0.0
         
-        # 尝试调用 evaluate_danger_level 方法
-        danger_level = 0.0
-        if hasattr(context, 'evaluate_danger_level'):
-            evaluate_danger_level_method = getattr(context, 'evaluate_danger_level', None)
-            if callable(evaluate_danger_level_method):
-                try:
-                    result = evaluate_danger_level_method()
-                    # 确保结果是浮点数
-                    if isinstance(result, (int, float)):
-                        danger_level = float(result)
-                except Exception:
-                    # 如果调用失败，使用默认值
-                    danger_level = 0.0
-        else:
-            # 手动计算危险等级
-            player_health = getattr(context, 'player_health', 30)
-            player_max_health = getattr(context, 'player_max_health', 30)
-            if player_max_health > 0:
-                health_ratio = player_health / player_max_health
-                if health_ratio < 0.2:
-                    danger_level += 0.4
-                elif health_ratio < 0.4:
-                    danger_level += 0.2
+        # 手动计算危险等级
+        player_health = getattr(context, 'player_health', 30)
+        player_max_health = getattr(context, 'player_max_health', 30) if hasattr(context, 'player_max_health') else 30
+        if player_max_health > 0:
+            health_ratio = player_health / player_max_health
+            if health_ratio < 0.2:
+                danger_level += 0.4
+            elif health_ratio < 0.4:
+                danger_level += 0.2
 
         # 基于危险程度更新情感
         if danger_level > 0.7:
@@ -306,8 +360,11 @@ class AIAgent:
         return "战术决策"
 
     async def _simulate_thinking(self):
-        """模拟思考时间"""
+        """模拟思考时间（限制在1秒内）"""
         min_time, max_time = self.personality.thinking_time_range
+
+        # 限制最大思考时间为1秒，防止卡住
+        max_time = min(max_time, 1.0)
 
         # 根据当前情感状态调整思考时间
         if self.current_emotion == "excited":
@@ -348,71 +405,6 @@ class AIAgent:
             reasoning="紧急情况下的安全决策",
             parameters={}
         )
-
-    def learn_from_game(self, game_result: Dict[str, Any]):
-        """从游戏结果中学习"""
-        self.games_played += 1
-
-        if game_result.get("won", False):
-            self.wins += 1
-            self._learn_from_victory(game_result)
-        else:
-            self.losses += 1
-            self._learn_from_defeat(game_result)
-
-        # 更新对手印象
-        opponent_id = game_result.get("opponent_id")
-        if opponent_id:
-            impression = {
-                "aggression": game_result.get("opponent_aggression", 0.5),
-                "skill_level": game_result.get("opponent_skill", 0.5),
-                "preferred_cards": game_result.get("opponent_cards", [])
-            }
-            self.memory.add_opponent_impression(opponent_id, impression)
-
-        # 进化人格（如果启用学习）
-        if self.is_learning and self.games_played % 5 == 0:
-            self._evolve_personality()
-
-    def decide_action(self, player, game_engine):
-        """
-        决策动作（兼容旧接口）
-        
-        Args:
-            player: 当前玩家对象
-            game_engine: 游戏引擎对象
-            
-        Returns:
-            AIAction: AI决策的动作
-        """
-        import asyncio
-        
-        # 创建游戏上下文
-        context = self._create_context_from_game(player, game_engine)
-        
-        # 在异步环境中运行决策
-        try:
-            # 尝试获取当前事件循环
-            loop = asyncio.get_event_loop()
-            if loop.is_running():
-                # 如果事件循环已经在运行，直接await协程
-                # 但我们需要在同步方法中返回结果，所以需要特殊处理
-                # 使用asyncio.run_coroutine_threadsafe来在现有循环中运行协程
-                future = asyncio.run_coroutine_threadsafe(self.make_decision(context), loop)
-                return future.result()
-            else:
-                # 如果事件循环存在但未运行，运行直到完成
-                return loop.run_until_complete(self.make_decision(context))
-        except RuntimeError:
-            # 如果没有事件循环，创建一个新的
-            loop = asyncio.new_event_loop()
-            asyncio.set_event_loop(loop)
-            try:
-                return loop.run_until_complete(self.make_decision(context))
-            finally:
-                # 清理事件循环
-                loop.close()
-                asyncio.set_event_loop(None)
 
     def _create_context_from_game(self, player, game_engine):
         """
@@ -478,12 +470,12 @@ class AIAgent:
             "player_mana": player.mana,  # 修复：使用 mana 而不是 current_mana
             "player_hand": player_hand,
             "player_field": player_field,
-            "player_deck_size": player.deck_size,
+            "player_deck_size": len(player.hand),  # 简化处理
             "opponent_health": opponent.health,
             "opponent_mana": opponent.mana,  # 修复：使用 mana 而不是 current_mana
             "opponent_field": opponent_field,
-            "opponent_hand_size": opponent.deck_size,  # 修复：使用 deck_size 而不是 hand_size
-            "opponent_deck_size": opponent.deck_size
+            "opponent_hand_size": len(opponent.hand),  # 简化处理
+            "opponent_deck_size": len(opponent.hand)  # 简化处理
         }
         
         # 移除 GameContext 不接受的参数
@@ -559,6 +551,31 @@ class AIAgent:
             self.personality = evolved_profile
             logger.info(f"代理 {self.agent_id} 人格已进化: {self.personality.name}")
 
+    def learn_from_game(self, game_result: Dict[str, Any]):
+        """从游戏结果中学习"""
+        self.games_played += 1
+
+        if game_result.get("won", False):
+            self.wins += 1
+            self._learn_from_victory(game_result)
+        else:
+            self.losses += 1
+            self._learn_from_defeat(game_result)
+
+        # 更新对手印象
+        opponent_id = game_result.get("opponent_id")
+        if opponent_id:
+            impression = {
+                "aggression": game_result.get("opponent_aggression", 0.5),
+                "skill_level": game_result.get("opponent_skill", 0.5),
+                "preferred_cards": game_result.get("opponent_cards", [])
+            }
+            self.memory.add_opponent_impression(opponent_id, impression)
+
+        # 进化人格（如果启用学习）
+        if self.is_learning and self.games_played % 5 == 0:
+            self._evolve_personality()
+
     def get_performance_stats(self) -> Dict[str, Any]:
         """获取性能统计"""
         win_rate = self.wins / max(1, self.games_played)
@@ -579,7 +596,7 @@ class AIAgent:
             "average_confidence": avg_confidence,
             "current_emotion": self.current_emotion,
             "opponents_known": len(self.memory.opponent_styles),
-            "strategy_performance": self.base_strategy.get_performance_stats()
+            "strategy_performance": self.base_strategy.get_performance_stats() if hasattr(self.base_strategy, 'get_performance_stats') else {}
         }
 
     def reset_statistics(self):
@@ -592,4 +609,5 @@ class AIAgent:
         self.current_emotion = "neutral"
         self.emotion_intensity = 0.5
 
-        self.base_strategy.reset_statistics()
+        if hasattr(self.base_strategy, 'reset_statistics'):
+            self.base_strategy.reset_statistics()

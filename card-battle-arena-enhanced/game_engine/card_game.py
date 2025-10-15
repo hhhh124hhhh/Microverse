@@ -265,36 +265,54 @@ class CardGame:
         logger.info(f"🎮 新游戏开始: {player1_name} vs {player2_name}")
 
     def _create_card_pool(self) -> List[Card]:
-        """创建卡牌池"""
+        """创建卡牌池 - 优化随从和法术比例"""
         return [
+            # 基础随从牌 (增加数量和多样性)
             Card("烈焰元素", 3, 5, 3, "minion", [], "💥 火焰元素的愤怒，燃烧一切敌人"),
             Card("霜狼步兵", 2, 2, 3, "minion", ["taunt"], "🛡️ 诺森德的精锐步兵，身披重甲守护前线"),
             Card("铁喙猫头鹰", 3, 2, 2, "minion", ["taunt"], "🦉 夜空中的猎手，锐利的铁喙撕裂敌人"),
             Card("狼人渗透者", 2, 3, 2, "minion", ["stealth"], "🐺 月影下的刺客，悄无声息地接近目标"),
             Card("石像鬼", 1, 1, 1, "minion", ["divine_shield"], "🗿 古老守护者，神圣护盾保护其免受首次伤害"),
+            Card("铁炉堡火枪手", 2, 2, 2, "minion", ["ranged"], "🔫 矮人神射手，远程精准打击敌人"),
+            Card("暴风雪骑士", 6, 6, 5, "minion", ["taunt", "divine_shield"], "🌨️ 暴风城的精英骑士，身披圣铠手持坚盾"),
+            Card("铁炉堡士兵", 2, 1, 4, "minion", ["taunt"], "⚔️ 铁炉堡的忠诚士兵，誓死守护阵地"),
+            Card("暗影巫师", 3, 2, 3, "minion", ["spell_power"], "🧙‍♂️ 掌控暗影力量的神秘巫师"),
+            # 新增更多随从牌
+            Card("森林狼", 1, 1, 1, "minion", [], "🐺 野性的森林狼，凶猛的掠食者"),
+            Card("鹰身女妖", 2, 2, 1, "minion", ["ranged"], "🦅 天空的猎手，远程攻击敌人"),
+            Card("岩石元素", 4, 3, 5, "minion", ["taunt"], "🗿 坚固的岩石守护者"),
+            Card("火焰元素", 3, 4, 4, "minion", [], "🔥 燃烧的元素，攻击力强大"),
+            Card("冰霜元素", 4, 3, 5, "minion", ["freeze"], "❄️ 寒冰元素，能够冻结敌人"),
+            Card("暗影猎手", 3, 3, 3, "minion", ["stealth"], "🌑 隐藏在阴影中的猎手"),
+
+            # 精选法术牌 (保留核心法术)
             Card("火球术", 4, 6, 0, "spell", [], "🔥 法师经典法术，召唤炽热火球轰击敌人"),
             Card("闪电箭", 1, 3, 0, "spell", [], "⚡ 萨满祭司的呼唤，天雷惩罚敌人"),
             Card("治愈术", 2, -5, 0, "spell", [], "💚 圣光之力，恢复5点生命值"),
             Card("狂野之怒", 1, 3, 0, "spell", [], "💢 释放原始怒火，对敌人造成3点伤害"),
             Card("奥术智慧", 3, 0, 0, "spell", ["draw_cards"], "📚 深奥的魔法知识，从虚空中抽取两张卡牌"),
             Card("寒冰箭", 2, 3, 0, "spell", ["freeze"], "❄️ 极寒之冰，冻结敌人并造成3点伤害"),
-            Card("铁炉堡火枪手", 2, 2, 2, "minion", ["ranged"], "🔫 矮人神射手，远程精准打击敌人"),
-            Card("暴风雪骑士", 6, 6, 5, "minion", ["taunt", "divine_shield"], "🌨️ 暴风城的精英骑士，身披圣铠手持坚盾"),
             Card("暗影步", 1, 0, 0, "spell", ["return"], "🌑 影子魔法，将一个随从返回手中重新部署"),
+            Card("神圣惩击", 4, 5, 0, "spell", [], "✨ 圣光审判，对邪恶敌人造成5点伤害"),
+            Card("治疗之环", 1, -2, 0, "spell", [], "💫 温和的治疗法术，恢复2点生命值"),
+            # 高费用法术
             Card("炎爆术", 8, 10, 0, "spell", [], "🌋 毁灭性的火焰魔法，造成10点巨额伤害"),
             Card("冰霜新星", 3, 2, 0, "spell", ["freeze"], "❄️ 冰系范围法术，冻结所有敌人"),
-            Card("神圣惩击", 4, 5, 0, "spell", [], "✨ 圣光审判，对邪恶敌人造成5点伤害"),
-            Card("铁炉堡士兵", 2, 1, 4, "minion", ["taunt"], "⚔️ 铁炉堡的忠诚士兵，誓死守护阵地"),
-            Card("暗影巫师", 3, 2, 3, "minion", ["spell_power"], "🧙‍♂️ 掌控暗影力量的神秘巫师"),
-            Card("治疗之环", 1, -2, 0, "spell", [], "💫 温和的治疗法术，恢复2点生命值"),
         ]
 
     def _initial_draw(self):
-        """初始抽牌"""
+        """初始抽牌 - 使用智能平衡系统"""
         for player in self.players:
-            for _ in range(3):
+            for i in range(3):
                 if player.deck_size > 0:
-                    card = random.choice(self.card_pool)
+                    # 初始抽牌也使用智能平衡，确保开局有随从
+                    if i == 0:
+                        # 第一张牌优先给随从
+                        minions = [card for card in self.card_pool if card.card_type == "minion"]
+                        card = random.choice(minions) if minions else random.choice(self.card_pool)
+                    else:
+                        # 后续牌使用智能抽牌
+                        card = self._smart_draw_card(player)
                     player.draw_card(card)
 
     def get_current_player(self) -> Player:
@@ -305,6 +323,38 @@ class CardGame:
         """获取对手"""
         return self.players[1 - self.current_player_idx]
 
+    def _smart_draw_card(self, player: Player) -> Card:
+        """智能抽牌系统 - 平衡随从和法术比例"""
+        # 统计手牌中的随从和法术数量
+        minion_count = sum(1 for card in player.hand if card.card_type == "minion")
+        spell_count = sum(1 for card in player.hand if card.card_type == "spell")
+
+        # 分离卡牌池中的随从和法术
+        minions = [card for card in self.card_pool if card.card_type == "minion"]
+        spells = [card for card in self.card_pool if card.card_type == "spell"]
+
+        # 智能抽牌策略
+        if minion_count < spell_count - 1:
+            # 随从明显少于法术，提高随从概率
+            weights = [0.8, 0.2]  # 80%随从，20%法术
+        elif spell_count < minion_count - 1:
+            # 法术明显少于随从，提高法术概率
+            weights = [0.3, 0.7]  # 30%随从，70%法术
+        else:
+            # 相对平衡，使用正常权重
+            weights = [0.6, 0.4]  # 60%随从，40%法术
+
+        # 根据权重选择卡牌类型
+        card_type = random.choices(["minion", "spell"], weights=weights)[0]
+
+        if card_type == "minion" and minions:
+            return random.choice(minions)
+        elif card_type == "spell" and spells:
+            return random.choice(spells)
+        else:
+            # 备用方案：随机选择
+            return random.choice(self.card_pool)
+
     def start_turn(self):
         """开始新的回合"""
         current = self.get_current_player()
@@ -314,9 +364,9 @@ class CardGame:
         for minion in current.field:
             minion.can_attack = True
 
-        # 抽一张牌
+        # 智能抽牌系统 - 平衡随从和法术比例
         if current.deck_size > 0:
-            card = random.choice(self.card_pool)
+            card = self._smart_draw_card(current)
             if current.draw_card(card):
                 logger.info(f"🃏 {current.name} 抽取了 {get_card_name(card)}")
 
@@ -367,6 +417,27 @@ class CardGame:
                         opponent.draw_card(draw_card)
                 result["message"] += "，抽了2张牌"
                 logger.info(f"  📚 {result['message']}")
+            elif "freeze" in card.mechanics:
+                # 冻结法术 - 造成伤害并冻结对手场上所有随从
+                opponent.health -= card.attack
+                # 冻结对手场上所有随从（简化实现）
+                for minion in opponent.field:
+                    # 在这个简化版本中，我们只是记录冻结效果
+                    # 实际的冻结机制需要更复杂的实现
+                    pass
+                result["message"] += f"，造成 {card.attack} 点伤害并冻结所有敌人"
+                logger.info(f"  ❄️ {result['message']}")
+            elif "return" in card.mechanics:
+                # 返回手牌法术 - 选择一个友方随从返回手牌
+                if player.field:
+                    # 简化实现：返回第一个随从到手牌
+                    returned_minion = player.field.pop(0)
+                    player.hand.append(returned_minion)
+                    result["message"] += f"，将 {get_card_name(returned_minion)} 返回手牌"
+                    logger.info(f"  🌙 {result['message']}")
+                else:
+                    result["message"] += "，但没有随从可以返回"
+                    logger.info(f"  🌙 {result['message']}")
             elif card.attack > 0:
                 # 伤害法术
                 opponent.health -= card.attack
@@ -594,6 +665,27 @@ class CardGame:
                         opponent.draw_card(draw_card)
                 result["message"] += "，抽了2张牌"
                 logger.info(f"  📚 {result['message']}")
+            elif "freeze" in card.mechanics:
+                # 冻结法术 - 造成伤害并冻结对手场上所有随从
+                opponent.health -= card.attack
+                # 冻结对手场上所有随从（简化实现）
+                for minion in opponent.field:
+                    # 在这个简化版本中，我们只是记录冻结效果
+                    # 实际的冻结机制需要更复杂的实现
+                    pass
+                result["message"] += f"，造成 {card.attack} 点伤害并冻结所有敌人"
+                logger.info(f"  ❄️ {result['message']}")
+            elif "return" in card.mechanics:
+                # 返回手牌法术 - 选择一个友方随从返回手牌
+                if player.field:
+                    # 简化实现：返回第一个随从到手牌
+                    returned_minion = player.field.pop(0)
+                    player.hand.append(returned_minion)
+                    result["message"] += f"，将 {get_card_name(returned_minion)} 返回手牌"
+                    logger.info(f"  🌙 {result['message']}")
+                else:
+                    result["message"] += "，但没有随从可以返回"
+                    logger.info(f"  🌙 {result['message']}")
             elif card.attack > 0:
                 # 伤害法术
                 opponent.health -= card.attack
