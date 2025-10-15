@@ -1586,10 +1586,26 @@ class CardGame:
         # 检查游戏结束
         self._check_game_over()
 
-        return {
+        # 构建详细的返回结果
+        result = {
             "success": True,
-            "message": result_message
+            "message": result_message,
+            "attacker_name": get_card_name(minion),
+            "damage": minion.attack,
+            "target_destroyed": False
         }
+
+        # 根据攻击目标类型添加目标信息
+        if target == "英雄":
+            result["target_name"] = "敌方英雄"
+            result["damage"] = minion.attack
+        else:
+            # 随从对战
+            result["target_name"] = get_card_name(target_minion) if 'target_minion' in locals() else "敌方随从"
+            result["damage"] = damage_dealt if 'damage_dealt' in locals() else minion.attack
+            result["target_destroyed"] = target_minion.health <= 0 if 'target_minion' in locals() else False
+
+        return result
 
     def attack_with_hero(self, player_idx: int) -> Dict[str, Any]:
         """英雄攻击"""
