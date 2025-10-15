@@ -1177,6 +1177,17 @@ class GameUIWithLive:
                 if playable_cards:
                     commands.insert(0, f"出牌 0-{len(playable_cards)-1}")
 
+            # 检查是否有可攻击的随从
+            if "battlefield" in game_state:
+                player_field = game_state["battlefield"].get("player", [])
+                attackable_minions = [
+                    minion for minion in player_field
+                    if minion.get("can_attack", False)
+                ]
+                if attackable_minions:
+                    # 添加攻击命令选项
+                    commands.insert(-1, f"攻击 0-{len(attackable_minions)-1}")
+
             # 检查是否可以使用英雄技能
             if mana >= 2:
                 commands.insert(-1, "技能")
@@ -1719,6 +1730,7 @@ class UserInputHandler:
 ⚔️ **攻击命令**：
   • 攻击 <我方随从> <敌方目标> - 命令随从攻击
   • attack <我方随从> <敌方目标> - 英文攻击命令
+  • 数字选择攻击 - 当有可攻击随从时，选择对应数字
 
 💪 **其他命令**：
   • 技能 / skill - 使用英雄技能（消耗2法力）
@@ -1730,6 +1742,8 @@ class UserInputHandler:
   • 卡牌编号见手牌区域
   • 绿色✅表示可以出牌，红色❌表示法力不足
   • 随从状态：🗡️可攻击，😴休眠中
+  • 当随从显示🗡️时，可以在命令中选择攻击
+  • 攻击格式：攻击 <随从索引> <目标索引>
         """.strip()
 
         return help_text
@@ -1991,6 +2005,17 @@ class GameUIStatic:
                     card_name = card.get("name", "未知卡牌")
                     commands.append(f"{i+1}. 出牌 {card_name} (费用{card.get('cost', 0)})")
 
+            # 检查是否有可攻击的随从
+            if "battlefield" in game_state:
+                player_field = game_state["battlefield"].get("player", [])
+                attackable_minions = [
+                    minion for minion in player_field
+                    if minion.get("can_attack", False)
+                ]
+                for i, minion in enumerate(attackable_minions):
+                    minion_name = minion.get("name", "随从")
+                    commands.append(f"{len(commands)+1}. 攻击 {minion_name}")
+
             # 检查是否可以使用英雄技能
             if mana >= 2:
                 commands.append(f"{len(commands)+1}. 使用英雄技能 (2法力)")
@@ -2066,6 +2091,9 @@ class GameUIStatic:
                 actual_card_index = self.game_state["hand"].index(playable_cards[card_index])
                 return await self._handle_play_card(actual_card_index)
 
+        elif "攻击" in selected_command:
+            return await self._handle_attack_from_command(selected_command)
+
         elif "英雄技能" in selected_command:
             return await self._handle_hero_power()
 
@@ -2083,6 +2111,76 @@ class GameUIStatic:
             return True, "👋 游戏已退出", {'action': 'quit'}
 
         return False, f"❌ 无法处理命令: {selected_command}", None
+
+    async def _handle_attack_from_command(self, command: str) -> Tuple[bool, str, Optional[dict]]:
+        """从命令字符串处理攻击命令"""
+        try:
+            # 解析攻击命令，例如 "1. 攻击 森林狼"
+            # 提取随从名称
+            parts = command.split(". 攻击 ")
+            if len(parts) != 2:
+                return False, f"❌ 无法解析攻击命令: {command}", None
+
+            minion_name = parts[1].strip()
+
+            # 获取可攻击的随从列表
+            if not self.game_state or 'battlefield' not in self.game_state:
+                return False, "❌ 游戏状态未初始化", None
+
+            player_field = self.game_state['battlefield'].get('player', [])
+            attackable_minions = [
+                (i, minion) for i, minion in enumerate(player_field)
+                if minion.get('can_attack', False)
+            ]
+
+            if not attackable_minions:
+                return False, "❌ 没有可攻击的随从", None
+
+            # 查找匹配的随从（支持部分匹配或索引）
+            selected_minion = None
+            selected_index = None
+
+            # 尝试按名称匹配
+            for i, minion in attackable_minions:
+                if minion_name in minion.get('name', ''):
+                    selected_minion = minion
+                    selected_index = i
+                    break
+
+            # 如果名称匹配失败，尝试按数字匹配
+            if selected_minion is None and minion_name.isdigit():
+                index = int(minion_name) - 1  # 转换为0-based索引
+                if 0 <= index < len(attackable_minions):
+                    selected_index, selected_minion = attackable_minions[index]
+
+            if selected_minion is None:
+                return False, f"❌ 找不到随从: {minion_name}", None
+
+            # 获取对手的随从作为攻击目标
+            opponent_field = self.game_state['battlefield'].get('opponent', [])
+
+            if not opponent_field:
+                # 没有敌方随从，直接攻击英雄
+                target_info = {'type': 'hero'}
+                target_name = '敌方英雄'
+            else:
+                # 选择第一个敌方随从作为目标（可以后续改进为让用户选择）
+                target_minion = opponent_field[0]
+                target_info = {'type': 'minion', 'index': 0, 'minion': target_minion}
+                target_name = target_minion.get('name', '随从')
+
+            attacker_name = selected_minion.get('name', '随从')
+
+            success_msg = self._input_handler.format_success_message('attack', f"{attacker_name} 攻击 {target_name}")
+            return True, success_msg, {
+                'action': 'attack',
+                'attacker_index': selected_index,
+                'attacker': selected_minion,
+                'target': target_info
+            }
+
+        except Exception as e:
+            return False, f"❌ 处理攻击命令时出错: {str(e)}", None
 
     async def _handle_play_card(self, card_index: int) -> Tuple[bool, str, Optional[dict]]:
         """处理出牌命令"""
@@ -2263,17 +2361,88 @@ class GameUIStatic:
 
     async def _handle_hero_power_used(self, action_data: dict):
         """处理英雄技能使用并更新状态"""
-        # 更新玩家状态 - 减少2点法力
-        if 'player' in self.game_state:
-            self.game_state['player']['mana'] -= 2
+        if self.game_engine:
+            # 使用真正的游戏引擎
+            try:
+                result = self.game_engine.use_hero_power(0)  # 0是玩家索引
+                if result.get("success", False):
+                    damage = result.get("damage", 0)
+                    self.console.print(f"[green]✅ 英雄技能造成{damage}点伤害！[/green]")
 
-        await asyncio.sleep(0.5)
-        self.console.print("[dim]💪 英雄技能已使用[/dim]")
+                    # 立即更新状态
+                    self.update_game_state()
+
+                    # 检查游戏是否结束
+                    if self.game_engine.game_over:
+                        winner = self.game_engine.get_winner()
+                        self.console.print(f"\n[bold yellow]🎮 游戏结束！{winner}获胜！[/bold yellow]")
+                else:
+                    reason = result.get("reason", "未知错误")
+                    self.console.print(f"[red]❌ 英雄技能失败: {reason}[/red]")
+            except Exception as e:
+                self.console.print(f"[red]❌ 游戏引擎英雄技能出错: {e}[/red]")
+        else:
+            # 回退到模拟模式 - 只减少法力值
+            if 'player' in self.game_state:
+                self.game_state['player']['mana'] -= 2
+
+            await asyncio.sleep(0.5)
+            self.console.print("[dim]💪 英雄技能已使用（模拟模式）[/dim]")
 
     async def _handle_attack_executed(self, action_data: dict):
         """处理攻击执行并更新状态"""
-        await asyncio.sleep(0.5)
-        self.console.print("[dim]⚔️ 攻击已执行[/dim]")
+        if self.game_engine:
+            # 使用真正的游戏引擎执行攻击
+            try:
+                attacker_index = action_data.get('attacker_index')
+                target_info = action_data.get('target')
+
+                # 确定攻击目标类型
+                if target_info['type'] == 'hero':
+                    # 攻击敌方英雄
+                    target_type = 'hero'
+                    target_index = None
+                else:
+                    # 攻击敌方随从
+                    target_type = 'minion'
+                    target_index = target_info.get('index')
+
+                # 构造正确的target字符串
+                if target_type == 'hero':
+                    target_str = "英雄"
+                else:
+                    target_str = f"随从_{target_index}"
+
+                # 执行攻击（使用正确的3参数格式）
+                result = self.game_engine.attack_with_minion(0, attacker_index, target_str)
+
+                if result.get("success", False):
+                    attacker_name = result.get("attacker_name", "随从")
+                    target_name = result.get("target_name", "目标")
+                    damage = result.get("damage", 0)
+
+                    self.console.print(f"[green]✅ {attacker_name} 对 {target_name} 造成 {damage} 点伤害！[/green]")
+
+                    # 如果目标被摧毁，显示额外信息
+                    if result.get("target_destroyed", False):
+                        self.console.print(f"[red]💀 {target_name} 被摧毁了！[/red]")
+
+                    # 立即更新状态
+                    self.update_game_state()
+
+                    # 检查游戏是否结束
+                    if self.game_engine.game_over:
+                        winner = self.game_engine.get_winner()
+                        self.console.print(f"\n[bold yellow]🎮 游戏结束！{winner}获胜！[/bold yellow]")
+                else:
+                    error_msg = result.get("message", "攻击失败")
+                    self.console.print(f"[red]❌ 攻击失败: {error_msg}[/red]")
+
+            except Exception as e:
+                self.console.print(f"[red]❌ 游戏引擎攻击出错: {e}[/red]")
+        else:
+            # 回退到模拟模式
+            await self._simulate_attack_executed(action_data)
 
     async def _handle_turn_ended(self, action_data: dict):
         """处理回合结束并让AI行动"""
@@ -2393,6 +2562,73 @@ class GameUIStatic:
 
         await asyncio.sleep(0.5)
         self.console.print(f"[dim]✅ {card.get('name')} 已添加到战场[/dim]")
+
+    async def _simulate_attack_executed(self, action_data: dict):
+        """模拟攻击执行（回退模式）"""
+        attacker_index = action_data.get('attacker_index')
+        target_info = action_data.get('target')
+        attacker = action_data.get('attacker')
+
+        if not attacker or not self.game_state:
+            return
+
+        attacker_name = attacker.get('name', '随从')
+        attacker_attack = attacker.get('attack', 0)
+
+        if target_info['type'] == 'hero':
+            # 攻击敌方英雄
+            target_name = '敌方英雄'
+
+            # 减少敌方英雄生命值
+            if 'opponent' in self.game_state:
+                self.game_state['opponent']['health'] -= attacker_attack
+
+            self.console.print(f"[green]✅ {attacker_name} 对 {target_name} 造成 {attacker_attack} 点伤害！[/green]")
+
+            # 检查是否击败了敌方英雄
+            if self.game_state['opponent']['health'] <= 0:
+                self.game_state['opponent']['health'] = 0
+                self.console.print(f"\n[bold yellow]🎮 游戏结束！玩家获胜！[/bold yellow]")
+        else:
+            # 攻击敌方随从
+            target_minion = target_info.get('minion')
+            target_index = target_info.get('index')
+
+            if target_minion:
+                target_name = target_minion.get('name', '随从')
+                target_health = target_minion.get('health', 0)
+
+                # 计算伤害
+                damage_dealt = attacker_attack
+                target_health_after = target_health - damage_dealt
+
+                # 更新敌方随从生命值
+                if 'battlefield' in self.game_state and 'opponent' in self.game_state['battlefield']:
+                    opponent_field = self.game_state['battlefield']['opponent']
+                    if target_index < len(opponent_field):
+                        opponent_field[target_index]['health'] = target_health_after
+
+                self.console.print(f"[green]✅ {attacker_name} 对 {target_name} 造成 {damage_dealt} 点伤害！[/green]")
+
+                # 检查是否摧毁了目标
+                if target_health_after <= 0:
+                    self.console.print(f"[red]💀 {target_name} 被摧毁了！[/red]")
+                    # 从战场移除被摧毁的随从
+                    if 'battlefield' in self.game_state and 'opponent' in self.game_state['battlefield']:
+                        opponent_field = self.game_state['battlefield']['opponent']
+                        if target_index < len(opponent_field):
+                            opponent_field.pop(target_index)
+                            # 更新敌方随从数量
+                            if 'opponent' in self.game_state:
+                                self.game_state['opponent']['field_count'] = len(opponent_field)
+
+        # 攻击者设置为已攻击状态
+        if 'battlefield' in self.game_state and 'player' in self.game_state['battlefield']:
+            player_field = self.game_state['battlefield']['player']
+            if attacker_index < len(player_field):
+                player_field[attacker_index]['can_attack'] = False
+
+        await asyncio.sleep(0.5)
 
     async def _simulate_turn_ended(self, action_data: dict):
         """模拟回合结束（回退模式）"""

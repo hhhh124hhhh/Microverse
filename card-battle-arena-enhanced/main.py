@@ -269,9 +269,21 @@ async def execute_ai_action(action, game: CardGame, ai_player_idx: int = 1) -> D
                         # 随从攻击英雄
                         result = game.attack_with_minion(ai_player_idx, attacker_idx, "英雄")
                     else:
-                        # 随从攻击其他随从
-                        target_name = get_card_name(target) if target else "随从0"
-                        result = game.attack_with_minion(ai_player_idx, attacker_idx, target_name)
+                        # 随从攻击其他随从 - 修复：找到目标随从的索引
+                        target_idx = None
+                        opponent = game.players[0] if ai_player_idx == 1 else game.players[1]
+
+                        for i, minion in enumerate(opponent.field):
+                            if get_card_name(minion) == get_card_name(target):
+                                target_idx = i
+                                break
+
+                        if target_idx is not None:
+                            # 使用正确的格式 "随从_X"
+                            target_for_attack = f"随从_{target_idx}"
+                            result = game.attack_with_minion(ai_player_idx, attacker_idx, target_for_attack)
+                        else:
+                            result = {"success": False, "message": f"找不到目标随从: {get_card_name(target)}"}
 
                     if result["success"]:
                         result["message"] = f"AI执行攻击 - {result['message']}"
@@ -811,7 +823,10 @@ async def combat_phase(current_player, player_health, player_field):
     if not player_field[opponent_idx] and player_field[current_player]:
         for minion in player_field[current_player]:
             if minion.get("can_attack", True):  # 简化：假设所有随从都能攻击
-                player_health[opponent_idx] -= minion["attack"]
+                # 检查是否有神圣护盾（虽然攻击英雄不应该有神圣护盾，但以防万一）
+                damage_dealt = minion["attack"]
+                # 英雄攻击不需要神圣护盾检查
+                player_health[opponent_idx] -= damage_dealt
                 logger.info(f"  ⚔️ 随从攻击英雄，造成 {minion['attack']} 点伤害")
 
     # 随从对战（简化版）
@@ -819,8 +834,16 @@ async def combat_phase(current_player, player_health, player_field):
         attacker = random.choice(player_field[current_player])
         defender = random.choice(player_field[opponent_idx])
 
-        # 互相攻击
-        defender["health"] -= attacker["attack"]
+        # 互相攻击 - 处理神圣护盾
+        damage_dealt = attacker["attack"]
+        if defender.get("mechanics") and "divine_shield" in defender["mechanics"]:
+            # 神圣护盾免疫首次伤害
+            damage_dealt = 0
+            # 移除神圣护盾
+            defender["mechanics"].remove("divine_shield")
+            logger.info(f"  ✨ {defender['name']} 的神圣护盾被击破")
+
+        defender["health"] -= damage_dealt
 
         if defender.get("mechanics") and "taunt" not in defender["mechanics"]:
             # 如果防御者没有嘲讽，可以攻击英雄
@@ -2230,7 +2253,9 @@ async def ai_combat_phase(current_player, player_health, player_field, ui: GameU
     if not player_field[opponent_idx] and player_field[current_player]:
         for minion in player_field[current_player]:
             if random.random() > 0.3:  # 70%概率攻击
-                player_health[opponent_idx] -= minion["attack"]
+                # 英雄攻击不需要神圣护盾检查
+                damage_dealt = minion["attack"]
+                player_health[opponent_idx] -= damage_dealt
                 ui.console.print(f"  ⚔️ {minion['name']} 攻击英雄，造成 {minion['attack']} 点伤害")
 
     # 随从对战（简化版）
@@ -2238,8 +2263,16 @@ async def ai_combat_phase(current_player, player_health, player_field, ui: GameU
         attacker = random.choice(player_field[current_player])
         defender = random.choice(player_field[opponent_idx])
 
-        # 互相攻击
-        defender["health"] -= attacker["attack"]
+        # 互相攻击 - 处理神圣护盾
+        damage_dealt = attacker["attack"]
+        if defender.get("mechanics") and "divine_shield" in defender["mechanics"]:
+            # 神圣护盾免疫首次伤害
+            damage_dealt = 0
+            # 移除神圣护盾
+            defender["mechanics"].remove("divine_shield")
+            ui.console.print(f"  ✨ {defender['name']} 的神圣护盾被击破")
+
+        defender["health"] -= damage_dealt
         ui.console.print(f"  ⚔️ {attacker['name']} vs {defender['name']} ({attacker['attack']} vs {defender['health']})")
 
         # 移除死亡的随从

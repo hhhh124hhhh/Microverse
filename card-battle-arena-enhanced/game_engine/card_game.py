@@ -234,13 +234,33 @@ class Player:
             self.max_mana += 1
         self.mana = self.max_mana
 
-    def draw_card(self, card: Card):
-        """抽牌"""
-        if len(self.hand) < 10:
+    def draw_card(self, card: Card = None) -> Dict[str, Any]:
+        """抽牌 - 支持疲劳伤害机制"""
+        result = {"success": False, "fatigue_damage": 0, "message": ""}
+
+        if len(self.hand) < 10 and card is not None:
+            # 正常抽牌
             self.hand.append(card)
             self.deck_size = max(0, self.deck_size - 1)
-            return True
-        return False
+            result["success"] = True
+            result["message"] = f"抽到了 {card.name}"
+        else:
+            # 手牌已满，但牌组还有牌
+            if self.deck_size > 0 and card is not None:
+                # 牌被弃掉，但牌组数量减少
+                self.deck_size = max(0, self.deck_size - 1)
+                result["message"] = f"手牌已满，{card.name} 被弃掉"
+            else:
+                # 疲劳伤害
+                if not hasattr(self, 'fatigue_count'):
+                    self.fatigue_count = 0
+
+                self.fatigue_count += 1
+                self.health -= self.fatigue_count
+                result["fatigue_damage"] = self.fatigue_count
+                result["message"] = f"疲劳伤害 {self.fatigue_count} 点"
+
+        return result
 
 
 class CardGame:
@@ -285,35 +305,72 @@ class CardGame:
             Card("冰霜元素", 4, 3, 5, "minion", ["freeze"], "❄️ 寒冰元素，能够冻结敌人"),
             Card("暗影猎手", 3, 3, 3, "minion", ["stealth"], "🌑 隐藏在阴影中的猎手"),
 
-            # 精选法术牌 (保留核心法术)
+            # 平衡优化后的法术牌
             Card("火球术", 4, 6, 0, "spell", [], "🔥 法师经典法术，召唤炽热火球轰击敌人"),
-            Card("闪电箭", 1, 3, 0, "spell", [], "⚡ 萨满祭司的呼唤，天雷惩罚敌人"),
+            Card("闪电箭", 1, 2, 0, "spell", [], "⚡ 快速的闪电攻击，造成2点伤害"),
             Card("治愈术", 2, -5, 0, "spell", [], "💚 圣光之力，恢复5点生命值"),
-            Card("狂野之怒", 1, 3, 0, "spell", [], "💢 释放原始怒火，对敌人造成3点伤害"),
             Card("奥术智慧", 3, 0, 0, "spell", ["draw_cards"], "📚 深奥的魔法知识，从虚空中抽取两张卡牌"),
             Card("寒冰箭", 2, 3, 0, "spell", ["freeze"], "❄️ 极寒之冰，冻结敌人并造成3点伤害"),
             Card("暗影步", 1, 0, 0, "spell", ["return"], "🌑 影子魔法，将一个随从返回手中重新部署"),
             Card("神圣惩击", 4, 5, 0, "spell", [], "✨ 圣光审判，对邪恶敌人造成5点伤害"),
             Card("治疗之环", 1, -2, 0, "spell", [], "💫 温和的治疗法术，恢复2点生命值"),
+            # 新增中等费用法术
+            Card("烈焰风暴", 5, 4, 0, "spell", [], "🔥 火焰风暴，对敌人造成4点伤害"),
+            Card("冰锥术", 3, 2, 0, "spell", ["freeze"], "❄️ 冰锥攻击，冻结敌人并造成2点伤害"),
+            Card("暗影箭", 3, 4, 0, "spell", [], "🌑 暗影能量箭，造成4点伤害"),
             # 高费用法术
             Card("炎爆术", 8, 10, 0, "spell", [], "🌋 毁灭性的火焰魔法，造成10点巨额伤害"),
             Card("冰霜新星", 3, 2, 0, "spell", ["freeze"], "❄️ 冰系范围法术，冻结所有敌人"),
+            Card("心灵震爆", 6, 7, 0, "spell", [], "💢 精神冲击，造成7点伤害"),
+            Card("神圣新星", 5, 3, 0, "spell", [], "✨ 圣光爆发，造成3点伤害并恢复2点生命")
         ]
 
     def _initial_draw(self):
-        """初始抽牌 - 使用智能平衡系统"""
+        """初始抽牌 - 确保开局高可用性"""
         for player in self.players:
             for i in range(3):
                 if player.deck_size > 0:
-                    # 初始抽牌也使用智能平衡，确保开局有随从
+                    # 按费用分层抽牌，确保前期可用
                     if i == 0:
-                        # 第一张牌优先给随从
-                        minions = [card for card in self.card_pool if card.card_type == "minion"]
-                        card = random.choice(minions) if minions else random.choice(self.card_pool)
+                        # 第一张牌：必须是1费随从
+                        one_cost_minions = [card for card in self.card_pool
+                                            if card.card_type == "minion" and card.cost == 1]
+                        card = random.choice(one_cost_minions) if one_cost_minions else self._fallback_card()
+                    elif i == 1:
+                        # 第二张牌：优先1费，其次是1-2费
+                        one_cost_cards = [card for card in self.card_pool if card.cost == 1]
+                        if one_cost_cards:
+                            card = random.choice(one_cost_cards)
+                        else:
+                            two_cost_cards = [card for card in self.card_pool if card.cost == 2]
+                            card = random.choice(two_cost_cards) if two_cost_cards else self._fallback_card()
                     else:
-                        # 后续牌使用智能抽牌
-                        card = self._smart_draw_card(player)
-                    player.draw_card(card)
+                        # 第三张牌：优先1-2费，确保至少2张可用牌
+                        early_playable = [card for card in self.card_pool if card.cost <= 2]
+                        card = random.choice(early_playable) if early_playable else self._fallback_card()
+
+                    draw_result = player.draw_card(card)
+                    if not draw_result["success"]:
+                        logger.warning(f"⚠️ 初始抽牌失败: {draw_result['message']}")
+
+    def _fallback_card(self) -> Card:
+        """备用卡牌选择，确保游戏能进行"""
+        # 返回费用最低的卡牌
+        min_cost = min(card.cost for card in self.card_pool)
+        cheapest = [card for card in self.card_pool if card.cost == min_cost]
+        return random.choice(cheapest)
+
+    def _get_cheap_card(self) -> Card:
+        """获取低费卡牌的备用方案"""
+        # 按优先级返回低费卡牌
+        cheap_cards = [card for card in self.card_pool if card.cost <= 2]
+        if cheap_cards:
+            return random.choice(cheap_cards)
+
+        # 如果没有低费卡牌，返回费用最低的卡牌
+        min_cost = min(card.cost for card in self.card_pool)
+        cheapest = [card for card in self.card_pool if card.cost == min_cost]
+        return random.choice(cheapest)
 
     def get_current_player(self) -> Player:
         """获取当前玩家"""
@@ -367,8 +424,19 @@ class CardGame:
         # 智能抽牌系统 - 平衡随从和法术比例
         if current.deck_size > 0:
             card = self._smart_draw_card(current)
-            if current.draw_card(card):
-                logger.info(f"🃏 {current.name} 抽取了 {get_card_name(card)}")
+            draw_result = current.draw_card(card)
+
+            if draw_result["success"]:
+                logger.info(f"🃏 {current.name} {draw_result['message']}")
+            elif draw_result["fatigue_damage"] > 0:
+                logger.warning(f"💀 {current.name} 受到 {draw_result['fatigue_damage']} 点疲劳伤害，剩余血量: {current.health}")
+            elif "被弃掉" in draw_result["message"]:
+                logger.info(f"🗑️ {current.name} {draw_result['message']}")
+        else:
+            # 牌组已空，检查疲劳伤害
+            draw_result = current.draw_card(None)  # 触发疲劳伤害
+            if draw_result["fatigue_damage"] > 0:
+                logger.warning(f"💀 {current.name} 受到 {draw_result['fatigue_damage']} 点疲劳伤害，剩余血量: {current.health}")
 
         self.turn_number += 1
         logger.info(f"🔄 回合 {self.turn_number} - {current.name} 回合")
@@ -411,11 +479,16 @@ class CardGame:
             opponent = self.get_opponent()
             if "draw_cards" in card.mechanics:
                 # 抽牌法术
+                cards_drawn = 0
                 for _ in range(2):
                     if opponent.deck_size > 0:
                         draw_card = random.choice(self.card_pool)
-                        opponent.draw_card(draw_card)
-                result["message"] += "，抽了2张牌"
+                        draw_result = opponent.draw_card(draw_card)
+                        if draw_result["success"]:
+                            cards_drawn += 1
+                        else:
+                            logger.info(f"📚 {opponent.name} {draw_result['message']}")
+                result["message"] += f"，抽了{cards_drawn}张牌"
                 logger.info(f"  📚 {result['message']}")
             elif "freeze" in card.mechanics:
                 # 冻结法术 - 造成伤害并冻结对手场上所有随从
@@ -507,10 +580,11 @@ class CardGame:
         opponent = self.get_opponent()
         messages = []
 
-        # 为新上场的随从设置攻击状态
+        # 为新上场的随从设置攻击状态 - 只在回合开始时激活
+        # 注意：这个函数在战斗阶段被调用，不应该重置攻击状态
         for minion in current.field:
             ensure_minion_attack_state(minion)
-            minion.can_attack = True  # 回合开始时激活攻击状态
+            # 不在这里强制设置can_attack，保持原有状态
 
         # 获取可攻击的随从
         attackable_minions = [i for i, minion in enumerate(current.field)
@@ -542,8 +616,21 @@ class CardGame:
                 # 寻找可以一击必杀的目标
                 for target_idx, target in enumerate(opponent.field):
                     if get_card_health(target) <= get_card_attack(minion):
-                        # 执行攻击
-                        target.health = get_card_health(target) - get_card_attack(minion)
+                        # 执行攻击 - 处理神圣护盾
+                        damage_dealt = get_card_attack(minion)
+
+                        # 检查目标是否有神圣护盾
+                        if "divine_shield" in getattr(target, 'mechanics', []):
+                            # 神圣护盾免疫首次伤害
+                            damage_dealt = 0
+                            # 移除神圣护盾
+                            if hasattr(target, 'mechanics'):
+                                target.mechanics.remove("divine_shield")
+                            logger.info(f"  ✨ {get_card_name(target)} 的神圣护盾被击破")
+                            # 神圣护盾被击破时，不会造成伤害
+                            break  # 跳出这个目标，因为伤害被免疫了
+
+                        target.health = get_card_health(target) - damage_dealt
                         minion.can_attack = False
                         # 兼容不同的卡牌数据格式
                         minion_name = get_card_name(minion)
@@ -600,7 +687,18 @@ class CardGame:
                         target_idx = int(target.split("_")[1])
                         if target_idx < len(opponent.field):
                             target_minion = opponent.field[target_idx]
-                            target_minion.health -= minion.attack
+
+                            # 处理神圣护盾
+                            damage_dealt = minion.attack
+                            if "divine_shield" in getattr(target_minion, 'mechanics', []):
+                                # 神圣护盾免疫首次伤害
+                                damage_dealt = 0
+                                # 移除神圣护盾
+                                if hasattr(target_minion, 'mechanics'):
+                                    target_minion.mechanics.remove("divine_shield")
+                                logger.info(f"  ✨ {get_card_name(target_minion)} 的神圣护盾被击破")
+
+                            target_minion.health -= damage_dealt
                             minion.can_attack = False
                             # 兼容不同的卡牌数据格式
                             minion_name = get_card_name(minion)
@@ -659,11 +757,16 @@ class CardGame:
             opponent = self.get_opponent()
             if "draw_cards" in card.mechanics:
                 # 抽牌法术
+                cards_drawn = 0
                 for _ in range(2):
                     if opponent.deck_size > 0:
                         draw_card = random.choice(self.card_pool)
-                        opponent.draw_card(draw_card)
-                result["message"] += "，抽了2张牌"
+                        draw_result = opponent.draw_card(draw_card)
+                        if draw_result["success"]:
+                            cards_drawn += 1
+                        else:
+                            logger.info(f"📚 {opponent.name} {draw_result['message']}")
+                result["message"] += f"，抽了{cards_drawn}张牌"
                 logger.info(f"  📚 {result['message']}")
             elif "freeze" in card.mechanics:
                 # 冻结法术 - 造成伤害并冻结对手场上所有随从
@@ -727,12 +830,21 @@ class CardGame:
             else:
                 defender = random.choice(opponent.field)
 
-            # 执行攻击
-            defender.health -= attacker.attack
+            # 执行攻击 - 处理神圣护盾
+            damage_dealt = attacker.attack
+            if "divine_shield" in getattr(defender, 'mechanics', []):
+                # 神圣护盾免疫首次伤害
+                damage_dealt = 0
+                # 移除神圣护盾
+                if hasattr(defender, 'mechanics'):
+                    defender.mechanics.remove("divine_shield")
+                logger.info(f"  ✨ {get_card_name(defender)} 的神圣护盾被击破")
+
+            defender.health -= damage_dealt
             # 兼容不同的卡牌数据格式
             attacker_name = get_card_name(attacker)
             defender_name = get_card_name(defender)
-            logger.info(f"  ⚔️ {attacker_name} vs {defender_name} ({attacker.attack} damage)")
+            logger.info(f"  ⚔️ {attacker_name} vs {defender_name} ({damage_dealt} damage)")
 
             # 移除死亡的随从
             if defender.health <= 0:
@@ -1231,6 +1343,16 @@ class CardGame:
             else:
                 hints.append(f"出牌: {playable_cards[0]}等{len(playable_cards)}张")
 
+        # 检查场上随从是否可以攻击
+        attackable_minions = [i for i, minion in enumerate(current.field)
+                            if get_minion_can_attack(minion, False)]
+        if attackable_minions:
+            # 添加随从攻击提示
+            if len(attackable_minions) == 1:
+                hints.append(f"攻击: {attackable_minions[0]}")
+            else:
+                hints.append(f"攻击: {attackable_minions[0]}等{len(attackable_minions)}个")
+
         # 英雄技能 - 简化
         if current.mana >= 2:
             hints.append("技能: s")
@@ -1243,28 +1365,53 @@ class CardGame:
 
         # 如果终端太窄，进一步简化
         if terminal_width < 70:
-            # 超紧凑模式
+            # 超紧凑模式 - 确保攻击提示也显示
+            short_hints = []
+
+            # 优先显示可出牌
             if playable_cards:
-                short_hints = [f"出:{playable_cards[0]}"]
-                if current.mana >= 2:
-                    short_hints.append("技:s")
-                short_hints.extend(["结束:Enter", "帮助:h"])
-            else:
-                short_hints = []
-                if current.mana >= 2:
-                    short_hints.append("技:s")
-                short_hints.extend(["结束:Enter", "帮助:h"])
+                short_hints.append(f"出:{playable_cards[0]}")
+
+            # 添加攻击提示（这是关键修复！）
+            attackable_minions = [i for i, minion in enumerate(current.field)
+                                if get_minion_can_attack(minion, False)]
+            if attackable_minions:
+                if len(attackable_minions) == 1:
+                    short_hints.append(f"攻:{attackable_minions[0]}")
+                else:
+                    short_hints.append(f"攻:{attackable_minions[0]}等")
+
+            # 添加技能提示
+            if current.mana >= 2:
+                short_hints.append("技:s")
+
+            short_hints.extend(["结束:Enter", "帮助:h"])
             full_hint = " | ".join(short_hints)
         elif terminal_width < 90:
-            # 紧凑模式 - 去掉多余文字
+            # 紧凑模式 - 确保攻击提示也显示
+            compact_hints = []
+
+            # 优先显示可出牌
             if playable_cards:
-                compact_hints = [f"出牌 {playable_cards[0]}"]
+                compact_hints.append(f"出牌 {playable_cards[0]}")
                 if len(playable_cards) > 1:
                     compact_hints[0] += f"等{len(playable_cards)}张"
-                if current.mana >= 2:
-                    compact_hints.append("技能 s")
-                compact_hints.extend(["结束 Enter", "帮助 h"])
-                full_hint = " | ".join(compact_hints)
+
+            # 添加攻击提示（这是关键修复！）
+            attackable_minions = [i for i, minion in enumerate(current.field)
+                                if get_minion_can_attack(minion, False)]
+            if attackable_minions:
+                if len(attackable_minions) == 1:
+                    compact_hints.append(f"攻击 {attackable_minions[0]}")
+                else:
+                    compact_hints.append(f"攻击 {attackable_minions[0]}等{len(attackable_minions)}个")
+
+            # 添加技能提示
+            if current.mana >= 2:
+                compact_hints.append("技能 s")
+
+            compact_hints.extend(["结束 Enter", "帮助 h"])
+            full_hint = " | ".join(compact_hints)
 
         # 最终截断保护 - 确保不会超出终端宽度
         if len(full_hint) > terminal_width - 4:  # 留4个字符的边距
@@ -1393,8 +1540,23 @@ class CardGame:
                 if taunt_minions and target_minion not in taunt_minions:
                     return {"success": False, "message": "必须先攻击嘲讽随从"}
 
-                # 执行战斗
-                target_minion.health -= minion.attack
+                # 执行战斗 - 处理神圣护盾
+                damage_dealt = minion.attack
+                shield_broken = False
+
+                # 检查目标是否有神圣护盾
+                if "divine_shield" in getattr(target_minion, 'mechanics', []):
+                    # 神圣护盾免疫首次伤害
+                    damage_dealt = 0
+                    # 移除神圣护盾
+                    if hasattr(target_minion, 'mechanics'):
+                        target_minion.mechanics.remove("divine_shield")
+                    shield_broken = True
+                    logger.info(f"  ✨ {target_minion.name} 的神圣护盾被击破")
+
+                # 应用伤害
+                if damage_dealt > 0:
+                    target_minion.health -= damage_dealt
 
                 # 反击（除非潜行）
                 if "stealth" not in getattr(minion, 'mechanics', []):
