@@ -76,6 +76,7 @@ node_modules/
 
 # dotenv environment variables file
 .env
+.env.local
 
 # Sensitive data files (API keys, personal information)
 api_keys.json
@@ -92,5 +93,6 @@ out/
 # Temporary files
 temp/
 tmp/
-# Environment variables
-.env.local
+
+# Project specific env file
+D:\Microverse\card-battle-arena-enhanced\.env
