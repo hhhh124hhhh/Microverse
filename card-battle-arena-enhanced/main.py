@@ -9,7 +9,7 @@ import logging
 import sys
 import random
 from pathlib import Path
-from typing import Dict, Any
+from typing import Dict, Any, Tuple, Optional
 
 # 添加项目根目录到Python路径
 project_root = Path(__file__).parent
@@ -29,6 +29,9 @@ from game_ui import GameUI
 # Rich库导入
 from rich.panel import Panel
 from rich import box
+from rich.table import Table
+from rich.console import Console
+from rich.prompt import IntPrompt
 
 
 # 配置日志
@@ -76,6 +79,112 @@ def get_card_type(card):
         return card_type
     # 再尝试字典格式的type
     return safe_get_card_attr(card, 'type', 'minion')
+
+
+def ai_choose_spell_target(game: CardGame, ai_player_idx: int, spell_card) -> Optional[str]:
+    """
+    AI为法术选择目标
+
+    Args:
+        game: 游戏实例
+        ai_player_idx: AI玩家索引
+        spell_card: 法术卡牌
+
+    Returns:
+        目标字符串 (如 "随从_0", "英雄") 或 None
+    """
+    opponent = game.players[1 - ai_player_idx]
+    spell_damage = get_card_attack(spell_card)
+
+    if spell_damage <= 0:
+        # 非伤害法术不需要目标
+        return None
+
+    # 检查是否有嘲讽随从
+    taunt_minions = []
+    for i, minion in enumerate(opponent.field):
+        if "taunt" in getattr(minion, 'mechanics', []):
+            taunt_minions.append((i, minion))
+
+    if taunt_minions:
+        # 有嘲讽随从，优先攻击嘲讽
+        # 选择血量最低的嘲讽随从
+        taunt_minions.sort(key=lambda x: get_card_health(x[1]))
+        target_idx, target_minion = taunt_minions[0]
+        return f"随从_{target_idx}"
+
+    # 没有嘲讽随从，选择最优目标
+    potential_targets = []
+
+    # 添加随从目标
+    for i, minion in enumerate(opponent.field):
+        minion_health = get_card_health(minion)
+        minion_attack = get_card_attack(minion)
+
+        # 计算目标价值
+        target_value = 0
+
+        # 能够一击必杀的随从优先
+        if minion_health <= spell_damage:
+            target_value += 100  # 必杀基础分
+            target_value += minion_attack * 5   # 攻击力高的随从价值更高
+            target_value += (spell_damage - minion_health) * 2  # 伤害溢出也有价值
+
+        # 有危险技能的随从优先
+        mechanics = getattr(minion, 'mechanics', [])
+        if "divine_shield" in mechanics:
+            target_value += 20  # 破圣盾有价值
+        if "spell_power" in mechanics:
+            target_value += 30  # 法术威胁大
+        if "stealth" in mechanics:
+            target_value += 15  # 潜行随从
+
+        # 血量低的随从优先
+        if minion_health <= spell_damage:
+            target_value += (spell_damage - minion_health) * 5
+
+        potential_targets.append((target_value, i, minion))
+
+    # 添加英雄目标
+    hero_value = 30  # 基础英雄价值
+    # 如果英雄血量危险，大幅增加价值
+    if opponent.health <= spell_damage:
+        hero_value += 200  # 可以斩杀，最高优先级
+    elif opponent.health <= spell_damage + 5:
+        hero_value += 100  # 接近斩杀
+    elif opponent.health <= 15:
+        hero_value += 50   # 血量较低
+    potential_targets.append((hero_value, -1, "英雄"))  # -1表示英雄
+
+    # 选择价值最高的目标
+    if potential_targets:
+        potential_targets.sort(key=lambda x: x[0], reverse=True)
+        best_value, target_idx, target = potential_targets[0]
+
+        if target_idx == -1:
+            return "英雄"
+        else:
+            return f"随从_{target_idx}"
+
+    # 如果没有合适目标，默认攻击英雄
+    return "英雄"
+
+
+def ai_choose_minion_target(game: CardGame, ai_player_idx: int, minion_card) -> Optional[str]:
+    """
+    AI为冲锋随从选择目标（简化实现，主要在攻击阶段处理）
+
+    Args:
+        game: 游戏实例
+        ai_player_idx: AI玩家索引
+        minion_card: 随从卡牌
+
+    Returns:
+        目标字符串或 None
+    """
+    # 冲锋随从的目标选择主要在攻击阶段处理
+    # 这里返回None，让随从正常上场
+    return None
 
 def create_ai_context(game: CardGame, ai_player_idx: int = 1, game_id: str = "ai_game") -> GameContext:
     """
@@ -187,13 +296,24 @@ async def execute_ai_action(action, game: CardGame, ai_player_idx: int = 1) -> D
         if playable_cards:
             # 选择AI推荐的卡牌，或者第一个可用的卡牌
             card_idx, card, reason = playable_cards[0]
-            result = game.play_card(ai_player_idx, card_idx)
+
+            # 检查是否需要目标选择（法术牌或有攻击力的牌）
+            target = None
+            if get_card_type(card) == "spell" and get_card_attack(card) > 0:
+                # 伤害法术需要选择目标
+                target = ai_choose_spell_target(game, ai_player_idx, card)
+            elif get_card_type(card) == "minion" and "charge" in getattr(card, 'mechanics', []):
+                # 有冲锋的随从可能需要攻击目标
+                target = ai_choose_minion_target(game, ai_player_idx, card)
+
+            result = game.play_card(ai_player_idx, card_idx, target)
 
             if result["success"]:
                 card_name = get_card_name(card)
                 card_attack = get_card_attack(card)
                 card_health = get_card_health(card)
-                result["message"] = f"AI打出 {card_name} ({card_attack}/{card_health}) - {reason} - {result['message']}"
+                target_info = f" -> {target}" if target else ""
+                result["message"] = f"AI打出 {card_name} ({card_attack}/{card_health}){target_info} - {reason} - {result['message']}"
             else:
                 result["message"] = f"AI出牌失败: {result['message']}"
         else:
@@ -222,13 +342,21 @@ async def execute_ai_action(action, game: CardGame, ai_player_idx: int = 1) -> D
 
         if spell_cards:
             card_idx, card, reason = spell_cards[0]
-            result = game.play_card(ai_player_idx, card_idx)
+
+            # 为法术选择目标
+            target = None
+            if get_card_attack(card) > 0:
+                # 伤害法术需要选择目标
+                target = ai_choose_spell_target(game, ai_player_idx, card)
+
+            result = game.play_card(ai_player_idx, card_idx, target)
 
             if result["success"]:
                 card_name = get_card_name(card)
                 card_attack = get_card_attack(card)
                 effect = "造成伤害" if card_attack > 0 else "治疗" if card_attack < 0 else "特殊效果"
-                result["message"] = f"AI使用法术 {card_name} ({effect}) - {reason} - {result['message']}"
+                target_info = f" -> {target}" if target else ""
+                result["message"] = f"AI使用法术 {card_name} ({effect}){target_info} - {reason} - {result['message']}"
             else:
                 result["message"] = f"AI使用法术失败: {result['message']}"
         else:
@@ -273,17 +401,46 @@ async def execute_ai_action(action, game: CardGame, ai_player_idx: int = 1) -> D
                         target_idx = None
                         opponent = game.players[0] if ai_player_idx == 1 else game.players[1]
 
-                        for i, minion in enumerate(opponent.field):
-                            if get_card_name(minion) == get_card_name(target):
-                                target_idx = i
-                                break
+                        # 验证目标是否有效 - 改进目标类型检查
+                        if target is None:
+                            result = {"success": False, "message": "AI攻击目标为空"}
+                        elif isinstance(target, str):
+                            # 如果目标已经是字符串格式（如"随从_0"），直接使用
+                            if target.startswith("随从_"):
+                                result = game.attack_with_minion(ai_player_idx, attacker_idx, target)
+                            elif "英雄" in target or target in ["opponent_hero", "敌对英雄", "敌方英雄"]:
+                                # 支持多种英雄目标格式
+                                result = game.attack_with_minion(ai_player_idx, attacker_idx, "英雄")
+                            else:
+                                result = {"success": False, "message": f"AI攻击目标格式无效: {target}"}
+                        elif hasattr(target, 'name') or isinstance(target, dict):
+                            # 如果目标有name属性或者是字典，尝试通过名称匹配找到目标
+                            target_name = get_card_name(target)
 
-                        if target_idx is not None:
-                            # 使用正确的格式 "随从_X"
-                            target_for_attack = f"随从_{target_idx}"
-                            result = game.attack_with_minion(ai_player_idx, attacker_idx, target_for_attack)
+                            for i, minion in enumerate(opponent.field):
+                                if get_card_name(minion) == target_name:
+                                    target_idx = i
+                                    break
+
+                            if target_idx is not None:
+                                # 使用正确的格式 "随从_X"
+                                target_for_attack = f"随从_{target_idx}"
+                                result = game.attack_with_minion(ai_player_idx, attacker_idx, target_for_attack)
+                            else:
+                                result = {"success": False, "message": f"找不到目标随从: {target_name}"}
                         else:
-                            result = {"success": False, "message": f"找不到目标随从: {get_card_name(target)}"}
+                            # 其他类型的目标，尝试转换为字符串
+                            try:
+                                target_str = str(target)
+                                if target_str.startswith("随从_"):
+                                    result = game.attack_with_minion(ai_player_idx, attacker_idx, target_str)
+                                elif "英雄" in target_str or target_str in ["opponent_hero", "敌对英雄", "敌方英雄"]:
+                                    # 支持多种英雄目标格式
+                                    result = game.attack_with_minion(ai_player_idx, attacker_idx, "英雄")
+                                else:
+                                    result = {"success": False, "message": f"AI无法识别目标: {target_str}"}
+                            except Exception as e:
+                                result = {"success": False, "message": f"AI攻击目标类型错误: {str(e)}"}
 
                     if result["success"]:
                         result["message"] = f"AI执行攻击 - {result['message']}"
@@ -989,8 +1146,42 @@ async def run_human_vs_ai(args):
                                 card_idx = int(user_input.split()[1])
                             else:  # 出牌
                                 card_idx = int(user_input.split()[1])
+
                             result = game.play_card(0, card_idx)
-                            if result["success"]:
+
+                            # 检查是否需要目标选择
+                            if not result["success"] and result.get("need_target_selection"):
+                                # 需要选择目标
+                                card = result["card"]
+                                available_targets = result.get("available_targets", [])
+                                print(f"🎯 {card.name} 需要选择目标:")
+                                for i, target in enumerate(available_targets):
+                                    print(f"   {i+1}. {target}")
+
+                                while True:
+                                    try:
+                                        choice = input("请选择目标 (数字): ").strip()
+                                        if choice.isdigit():
+                                            choice_idx = int(choice) - 1
+                                            if 0 <= choice_idx < len(available_targets):
+                                                selected_target = available_targets[choice_idx]
+                                                break
+                                            else:
+                                                print(f"❌ 请选择 1-{len(available_targets)} 之间的数字")
+                                        else:
+                                            print("❌ 请输入有效数字")
+                                    except KeyboardInterrupt:
+                                        print("❌ 目标选择已取消")
+                                        break
+
+                                # 重新打出卡牌，这次带上目标
+                                if selected_target:
+                                    result = game.play_card(0, card_idx, selected_target)
+                                    if result["success"]:
+                                        print(f"✅ {result['message']}")
+                                    else:
+                                        print(f"❌ {result['message']}")
+                            elif result["success"]:
                                 print(f"✅ {result['message']}")
                             else:
                                 print(f"❌ {result['message']}")
@@ -1294,7 +1485,40 @@ async def run_interactive_mode(args):
                     try:
                         card_idx = int(user_input.split()[1])
                         result = game.play_card(0, card_idx)
-                        if result["success"]:
+
+                        # 检查是否需要目标选择
+                        if not result["success"] and result.get("need_target_selection"):
+                            # 需要选择目标
+                            card = result["card"]
+                            available_targets = result.get("available_targets", [])
+                            print(f"🎯 {card.name} 需要选择目标:")
+                            for i, target in enumerate(available_targets):
+                                print(f"   {i+1}. {target}")
+
+                            while True:
+                                try:
+                                    choice = input("请选择目标 (数字): ").strip()
+                                    if choice.isdigit():
+                                        choice_idx = int(choice) - 1
+                                        if 0 <= choice_idx < len(available_targets):
+                                            selected_target = available_targets[choice_idx]
+                                            break
+                                        else:
+                                            print(f"❌ 请选择 1-{len(available_targets)} 之间的数字")
+                                    else:
+                                        print("❌ 请输入有效数字")
+                                except KeyboardInterrupt:
+                                    print("❌ 目标选择已取消")
+                                    break
+
+                            # 重新打出卡牌，这次带上目标
+                            if selected_target:
+                                result = game.play_card(0, card_idx, selected_target)
+                                if result["success"]:
+                                    print(f"✅ {result['message']}")
+                                else:
+                                    print(f"❌ {result['message']}")
+                        elif result["success"]:
                             print(f"✅ {result['message']}")
                         else:
                             print(f"❌ {result['message']}")
@@ -1772,19 +1996,42 @@ async def run_menu_human_vs_ai(choice: dict, ui: GameUI):
                         game.display_status(use_rich=True)
                         continue
 
-                    # 简化出牌 - 直接输入数字
+                    # 数字输入 - 先检查是否为命令编号，再当作出牌
                     elif user_input.isdigit():
-                        card_idx = int(user_input)
-                        if card_idx < len(current_player.hand):
-                            result = game.quick_play_card(0, card_idx)
-                            ui.console.print(
-                                f"✅ {result['message']}" if result["success"]
-                                else f"❌ {result['message']}",
-                                style="green" if result["success"] else "red"
-                            )
+                        input_num = int(user_input)
+
+                        # 检查是否为攻击命令编号
+                        available_commands = ui._get_available_commands(ui.game_state)
+                        if 1 <= input_num <= len(available_commands):
+                            # 处理编号命令
+                            selected_command = available_commands[input_num - 1]
+                            ui.console.print(f"🎯 执行命令: {selected_command}")
+
+                            # 检查是否为攻击命令
+                            if "攻击" in selected_command:
+                                success, message, action_data = await ui._handle_attack_from_command(selected_command)
+                                if success and action_data:
+                                    # 执行攻击动作
+                                    await ui._handle_attack_executed(action_data)
+                                else:
+                                    ui.console.print(message, style="red")
+                                continue
+                            else:
+                                ui.console.print(f"⚠️ 暂不支持此命令类型: {selected_command}", style="yellow")
+                                continue
                         else:
-                            ui.console.print("❌ 无效的卡牌编号", style="red")
-                        continue
+                            # 当作手牌编号处理
+                            card_idx = input_num
+                            if card_idx < len(current_player.hand):
+                                result = game.quick_play_card(0, card_idx)
+                                ui.console.print(
+                                    f"✅ {result['message']}" if result["success"]
+                                    else f"❌ {result['message']}",
+                                    style="green" if result["success"] else "red"
+                                )
+                            else:
+                                ui.console.print("❌ 无效的卡牌编号", style="red")
+                            continue
 
                     # 完整出牌命令
                     elif user_input_lower.startswith('出牌 ') or user_input_lower.startswith('play '):
@@ -2351,19 +2598,56 @@ async def run_menu_interactive(choice: dict, ui: GameUI):
                     game.display_status(use_rich=True)
                     continue
 
-                # 简化出牌 - 直接输入数字
+                # 数字输入 - 先检查是否为命令编号，再当作出牌
                 elif user_input.isdigit():
-                    card_idx = int(user_input)
-                    if card_idx < len(current_player.hand):
-                        result = game.quick_play_card(0, card_idx)
-                        ui.console.print(
-                            f"✅ {result['message']}" if result["success"]
-                            else f"❌ {result['message']}",
-                            style="green" if result["success"] else "red"
-                        )
+                    input_num = int(user_input)
+
+                    # 检查是否为攻击命令编号
+                    available_commands = ui._get_available_commands(ui.game_state)
+                    if 1 <= input_num <= len(available_commands):
+                        # 处理编号命令
+                        selected_command = available_commands[input_num - 1]
+                        ui.console.print(f"🎯 执行命令: {selected_command}")
+
+                        # 检查是否为攻击命令
+                        if "攻击" in selected_command:
+                            success, message, action_data = await ui._handle_attack_from_command(selected_command)
+                            if success and action_data:
+                                # 执行攻击动作
+                                await ui._handle_attack_executed(action_data)
+                            else:
+                                ui.console.print(message, style="red")
+                            continue
+                        # 检查是否为法术命令
+                        elif "法术" in selected_command:
+                            success, message, action_data = await ui._handle_spell_from_command(selected_command)
+                            if success and action_data:
+                                # 执行法术动作
+                                success, result_message = await ui._execute_spell_action(action_data, game)
+                                ui.console.print(
+                                    f"✅ {result_message}" if success
+                                    else f"❌ {result_message}",
+                                    style="green" if success else "red"
+                                )
+                            else:
+                                ui.console.print(message, style="red")
+                            continue
+                        else:
+                            ui.console.print(f"⚠️ 暂不支持此命令类型: {selected_command}", style="yellow")
+                            continue
                     else:
-                        ui.console.print("❌ 无效的卡牌编号", style="red")
-                    continue
+                        # 当作手牌编号处理
+                        card_idx = input_num
+                        if card_idx < len(current_player.hand):
+                            result = game.quick_play_card(0, card_idx)
+                            ui.console.print(
+                                f"✅ {result['message']}" if result["success"]
+                                else f"❌ {result['message']}",
+                                style="green" if result["success"] else "red"
+                            )
+                        else:
+                            ui.console.print("❌ 无效的卡牌编号", style="red")
+                        continue
 
                 # 完整出牌命令
                 elif user_input_lower.startswith('出牌 ') or user_input_lower.startswith('play '):
@@ -3088,6 +3372,140 @@ async def main():
             await cleanup_resources()
         except:
             pass
+
+
+async def _handle_spell_from_command(ui, spell_command: str) -> Tuple[bool, str, Optional[dict]]:
+    """处理法术命令，解析法术名称和目标"""
+    try:
+        # 解析法术命令，例如 "法术: 闪电箭 → 3个目标"
+        if "法术:" in spell_command:
+            spell_part = spell_command.split("法术:")[1].strip()
+            spell_name = spell_part.split("→")[0].strip()
+        else:
+            return False, f"❌ 无法解析法术命令: {spell_command}", None
+
+        # 查找法术卡牌
+        if not ui.game_state or 'hand' not in ui.game_state:
+            return False, "❌ 游戏状态未初始化", None
+
+        spell_card = None
+        spell_index = None
+        for i, card in enumerate(ui.game_state["hand"]):
+            if (card.get("type") == "spell" and
+                card.get("attack", 0) > 0 and
+                spell_name in card.get("name", "")):
+                spell_card = card
+                spell_index = i
+                break
+
+        if spell_card is None:
+            return False, f"❌ 找不到法术卡牌: {spell_name}", None
+
+        # 检查法力值是否足够
+        player_mana = ui.game_state.get("player", {}).get("mana", 0)
+        card_cost = spell_card.get("cost", 0)
+        if card_cost > player_mana:
+            return False, f"❌ 法力值不足，需要 {card_cost} 点法力", None
+
+        # 检查是否需要目标选择
+        opponent_field = ui.game_state.get('battlefield', {}).get('opponent', [])
+        if opponent_field:
+            # 需要目标选择
+            available_targets = []
+
+            # 添加英雄目标
+            available_targets.append(("英雄", "敌方英雄"))
+
+            # 添加随从目标
+            for i, minion in enumerate(opponent_field):
+                target_name = minion.get('name', f'随从{i}')
+                available_targets.append((f"随从{i}", target_name))
+
+            if not available_targets:
+                return False, "❌ 没有可用的攻击目标", None
+
+            # 构建选择菜单
+            from rich.console import Console
+            from rich.table import Table
+            from rich.panel import Panel
+            from rich.prompt import IntPrompt
+
+            console = Console()
+            console.print()
+            console.print(Panel(
+                f"[bold yellow]🎯 选择 {spell_name} 的目标[/bold yellow]",
+                box=box.ROUNDED,
+                border_style="yellow"
+            ))
+
+            # 创建目标选择表格
+            target_table = Table(show_header=True, box=box.ROUNDED)
+            target_table.add_column("选项", style="cyan", width=8)
+            target_table.add_column("目标", style="white")
+
+            for i, (target_key, target_name) in enumerate(available_targets):
+                target_table.add_row(f"{i+1}", target_name)
+
+            console.print(target_table)
+
+            # 获取用户选择
+            choice = IntPrompt.ask("请选择目标 [1/2/3]", choices=[str(i+1) for i in range(len(available_targets))])
+
+            if 1 <= choice <= len(available_targets):
+                selected_target = available_targets[choice-1][0]
+
+                action_data = {
+                    'action': 'play_spell',
+                    'spell_index': spell_index,
+                    'spell': spell_card,
+                    'target': selected_target
+                }
+
+                return True, f"✅ 选择目标: {available_targets[choice-1][1]}", action_data
+            else:
+                return False, "❌ 无效的目标选择", None
+
+        else:
+            # 没有随从，直接攻击英雄
+            action_data = {
+                'action': 'play_spell',
+                'spell_index': spell_index,
+                'spell': spell_card,
+                'target': "英雄"
+            }
+
+            return True, f"✅ {spell_name} 将攻击敌方英雄", action_data
+
+    except Exception as e:
+        return False, f"❌ 法术命令处理异常: {str(e)}", None
+
+
+async def _execute_spell_action(action_data: dict, game) -> Tuple[bool, str]:
+    """执行法术动作"""
+    try:
+        if action_data.get('action') != 'play_spell':
+            return False, "❌ 无效的法术动作类型"
+
+        spell_index = action_data.get('spell_index')
+        target = action_data.get('target')
+
+        if spell_index is None or target is None:
+            return False, "❌ 法术参数不完整"
+
+        # 执行游戏引擎的play_card方法
+        result = game.play_card(0, spell_index, target)
+
+        if result["success"]:
+            return True, result["message"]
+        else:
+            # 检查是否需要目标选择
+            if result.get("need_target_selection"):
+                return False, "❌ 需要选择目标，但目标选择已完成"
+            else:
+                return False, result["message"]
+
+    except Exception as e:
+        return False, f"❌ 法术执行异常: {str(e)}"
 
 
 if __name__ == "__main__":

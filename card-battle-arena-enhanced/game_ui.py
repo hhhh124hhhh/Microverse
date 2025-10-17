@@ -16,6 +16,7 @@ from rich.text import Text
 from rich import box
 from rich.live import Live
 from rich.prompt import Prompt, IntPrompt, Confirm
+import re
 from rich.markdown import Markdown
 from rich.rule import Rule
 import pyfiglet
@@ -785,58 +786,496 @@ class GameUI:
 
     def show_help(self):
         """显示帮助"""
-        self.console.clear()
+        while True:
+            self.console.clear()
+
+            # 帮助菜单
+            help_menu = Table(show_header=True, box=box.ROUNDED)
+            help_menu.add_column("选项", style="yellow", width=8)
+            help_menu.add_column("帮助分类", style="white")
+            help_menu.add_column("说明", style="dim")
+
+            help_menu.add_row("1", "🎮 基本操作", "[dim]游戏命令和规则说明[/dim]")
+            help_menu.add_row("2", "🃏 卡牌特效", "[dim]详细说明各种卡牌特效[/dim]")
+            help_menu.add_row("3", "🤖 AI系统", "[dim]AI难度和策略介绍[/dim]")
+            help_menu.add_row("4", "💡 游戏技巧", "[dim]策略建议和游戏提示[/dim]")
+            help_menu.add_row("0", "🔙 返回主菜单", "[dim]返回游戏主界面[/dim]")
+
+            self.console.print(Align.center(help_menu))
+            self.console.print()
+
+            choice = Prompt.ask(
+                "[bold green]请选择帮助分类[/bold green]",
+                choices=["1", "2", "3", "4", "0"],
+                default="0"
+            )
+
+            if choice == "0":
+                break
+            elif choice == "1":
+                self._show_basic_help()
+            elif choice == "2":
+                self._show_card_effects_help()
+            elif choice == "3":
+                self._show_ai_help()
+            elif choice == "4":
+                self._show_tips_help()
+
+    def _show_basic_help(self):
+        """显示基本操作帮助"""
         help_content = """
-# 🎮 游戏帮助
+# 🎮 基本操作指南
 
-## 📋 基本操作
+## 📋 游戏命令
 
-### 游戏命令
-- **出牌 <编号>** - 打出指定编号的卡牌
+### 基础命令
+- **出牌 <编号>** 或 **<编号>** - 打出指定编号的手牌
+- **攻击 <随从> <目标>** - 指挥随从攻击目标
 - **技能** - 使用英雄技能（消耗2点法力）
-- **结束回合** - 结束当前回合，轮到对手
-- **状态** - 查看当前游戏状态
-- **帮助** - 显示帮助信息
+- **结束回合** - 结束当前回合，轮到对手行动
+- **帮助** 或 **?** - 显示帮助信息
 - **退出** - 退出游戏
 
-### 游戏规则
-1. **法力系统**: 每回合获得1点法力，最多10点
-2. **卡牌类型**:
-   - 🃏 **随从牌**: 上场战斗，有攻击力和生命值
-   - ✨ **法术牌**: 使用后立即产生效果
-3. **胜利条件**: 将对手生命值降至0
+## 🎯 游戏规则
 
-## 🤖 AI特性
+### 法力系统
+- 每回合开始时获得1点法力值
+- 法力值上限最多为10点
+- 出牌需要消耗相应的法力值
 
-### AI难度
-- **简单**: AI经常失误，适合新手
-- **普通**: AI正常发挥，适合练习
-- **困难**: AI表现出色，需要策略
-- **专家**: AI完美发挥，极限挑战
+### 卡牌类型
+- **🃏 随从牌**:
+  - 上场战斗，有攻击力和生命值
+  - 刚上场的随从需要等待一回合才能攻击
+  - 可以拥有特殊特效（嘲讽、圣盾等）
 
-### AI策略
-- **规则AI**: 基于预设规则的稳健策略
-- **混合AI**: 结合规则和深度学习的智能策略
+- **✨ 法术牌**:
+  - 使用后立即产生效果
+  - 可能造成伤害、治疗或提供其他效果
 
-## 💡 游戏提示
+### 胜利条件
+- 将对手英雄的生命值降至0即可获胜
+- 对手将你的生命值降至0则失败
 
-1. 合理管理法力资源
-2. 观察对手的策略模式
-3. 平衡进攻和防守
-4. 利用卡牌的特殊效果
-5. 保持耐心，享受游戏！
+## 💡 界面说明
 
-祝您游戏愉快！🎉
+### 状态面板
+- **❤️ 生命值**: 当前/最大生命值
+- **💰 法力值**: 当前可用/最大法力值
+- **🃋 手牌数**: 当前手牌数量
+- **⚔️ 随从数**: 战场上随从数量
+
+### 战场信息
+- **阵营**: 👤玩家 / 🤖对手
+- **随从**: 随从名称
+- **属性**: 攻击力/生命值
+- **状态**: 🗡️可攻击 / 😴休眠中
+- **特效**: 显示随从拥有的特殊能力
+
+### 手牌显示
+- **编号**: 卡牌的选择编号
+- **卡牌名称**: 卡牌的名称
+- **费用**: 打出此牌需要的法力值
+- **属性**: 随从的攻击/生命 或 法术的威力
+- **状态**: ✅可出 / ❌费用不足
         """
 
         self.console.print(Panel(
             Markdown(help_content),
-            title="📖 游戏帮助",
+            title="📖 基本操作指南",
             box=box.ROUNDED,
             border_style="blue"
         ))
 
-        Prompt.ask("按回车键返回主菜单", default="")
+        Prompt.ask("按回车键返回帮助菜单", default="")
+
+    def _show_card_effects_help(self):
+        """显示卡牌特效帮助"""
+        help_content = """
+# 🃏 卡牌特效详解
+
+## 🛡️ 防御型特效
+
+### 🛡️ 嘲讽 (Taunt)
+- **效果**: 强制敌方随从优先攻击具有嘲讽的随从
+- **策略价值**: 保护其他随从和英雄，是防御战术的核心
+- **搭配建议**: 与高血量随从配合效果更佳
+- **克制方法**: 使用法术牌或具有特效的随从处理
+
+### ✨ 圣盾 (Divine Shield)
+- **效果**: 免疫下一次受到的伤害，受到伤害后圣盾消失
+- **策略价值**: 有效对抗高攻击力单体攻击
+- **恢复方式**: 特定法术可以重新获得圣盾
+- **注意事项**: 只能抵挡一次伤害，之后消失
+
+### 🌑 潜行 (Stealth)
+- **效果**: 敌方无法选择潜行随从作为目标，攻击后解除潜行
+- **策略价值**: 保护关键随从免受法术和攻击
+- **持续时间**: 直到随从造成伤害为止
+- **克制方法**: 范围效果法术或攻击其他目标
+
+## ⚔️ 攻击型特效
+
+### ⚡ 冲锋 (Charge)
+- **效果**: 随从可以立即攻击，无需等待一回合
+- **策略价值**: 快速施加压力，抢夺节奏优势
+- **常见搭配**: 高攻击力随从
+- **风险**: 容易成为敌方目标
+
+### 💨 风怒 (Windfury)
+- **效果**: 每回合可以攻击两次
+- **策略价值**: 大幅提升输出能力
+- **注意事项**: 每次攻击都需要独立的攻击目标
+- **搭配建议**: 配合治疗或圣盾效果
+
+### 🏹 远程 (Ranged)
+- **效果**: 可以从安全距离攻击，避免受到部分反击伤害
+- **策略价值**: 安全输出，保护脆弱的随从
+- **射程**: 通常可以攻击任何敌方目标
+- **定位**: 后排输出单位
+
+## 🔥 魔法型特效
+
+### 🔥 法术强度 (Spell Power)
+- **效果**: 提升己方法术的伤害效果
+- **策略价值**: 增强法术卡牌的威力
+- **计算方式**: 通常按百分比提升法术伤害
+- **搭配**: 与伤害法术配合使用
+
+### 💀 吸血 (Lifesteal)
+- **效果**: 造成伤害的同时为英雄恢复等量生命值
+- **策略价值**: 提供持续的续航能力
+- **限制**: 只能通过攻击触发
+- **价值**: 在持久战中表现出色
+
+### ☠️ 剧毒 (Poisonous)
+- **效果**: 对随从造成任何伤害即可直接消灭目标
+- **策略价值**: 高效处理大型随从
+- **注意事项**: 对英雄无效，只对随从生效
+- **策略**: 用于清除敌方强力随从
+
+## 🎯 特殊机制
+
+### 复合特效
+许多卡牌拥有多种特效组合：
+- **嘲讽+圣盾**: 理想的防御组合
+- **冲锋+风怒**: 强大的进攻组合
+- **潜行+吸血**: 持续续航的组合
+
+### 特效互动
+- **圣盾 vs 剧毒**: 圣盾可以抵挡剧毒的即死效果
+- **嘲讽 vs 潜行**: 潜行随从无法被强制攻击嘲讽目标
+- **风怒 vs 法术强度**: 风怒随从受益于法术强度加成
+
+## 💡 策略建议
+
+### 早期游戏
+- 优先使用冲锋随从抢夺节奏
+- 利用嘲讽随从保护英雄
+- 合理使用潜行随从进行安全输出
+
+### 中期游戏
+- 圣盾随从提供稳定的场面控制
+- 风怒随从可以快速清理场面
+- 法术强度随从配合法术进行爆发
+
+### 后期游戏
+- 吸血随从提供续航能力
+- 剧毒随从处理大型威胁
+- 复合特效随从通常能决定胜负
+        """
+
+        self.console.print(Panel(
+            Markdown(help_content),
+            title="📖 卡牌特效详解",
+            box=box.ROUNDED,
+            border_style="purple"
+        ))
+
+        Prompt.ask("按回车键返回帮助菜单", default="")
+
+    def _show_ai_help(self):
+        """显示AI系统帮助"""
+        help_content = """
+# 🤖 AI系统详解
+
+## 🎯 AI难度等级
+
+### 🟢 简单难度
+- **特点**: AI经常失误，决策较为随机
+- **适合**: 新手玩家学习游戏机制
+- **行为**:
+  - 经常出不符合当前局势的牌
+  - 攻击目标选择不够优化
+  - 资源管理效率较低
+
+### 🔵 普通难度
+- **特点**: AI正常发挥，平衡的游戏体验
+- **适合**: 一般玩家练习和娱乐
+- **行为**:
+  - 基本合理的出牌顺序
+  - 正确的攻击目标选择
+  - 适度的资源管理
+
+### 🟠 困难难度
+- **特点**: AI表现出色，需要玩家认真应对
+- **适合**: 有经验的玩家挑战
+- **行为**:
+  - 优化的出牌策略
+  - 精准的攻击时机把握
+  - 高效的资源利用
+
+### 🔴 专家难度
+- **特点**: AI完美发挥，提供极限挑战
+- **适合**: 高手玩家测试策略
+- **行为**:
+  - 近乎完美的决策
+  - 复杂的战术组合
+  - 最优的资源管理
+
+## 🧠 AI策略系统
+
+### 规则AI (Rule-Based AI)
+- **原理**: 基于预设的规则和决策树
+- **特点**:
+  - 决策速度快，响应及时
+  - 行为可预测，便于学习应对
+  - 稳定性强，不会出现明显失误
+- **适用场景**:
+  - 新手教学
+  - 稳定的游戏体验
+  - 性能要求较高的环境
+
+### 混合AI (Hybrid AI)
+- **原理**: 结合规则系统和深度学习技术
+- **特点**:
+  - 更智能的决策能力
+  - 能够适应不同局势
+  - 具有一定的学习能力
+- **技术优势**:
+  - 大语言模型(LLM)加持
+  - 动态策略调整
+  - 更接近人类的思维方式
+
+## 🎭 AI个性系统
+
+### 适应性学习者 (Adaptive Learner)
+- **特点**: 根据对手行为调整策略
+- **风格**: 平衡型，能够适应各种局势
+- **优势**:
+  - 学习对手的习惯
+  - 动态调整战术
+  - 中庸但全面的策略
+
+### 激进狂战士 (Aggressive Berserker)
+- **特点**: 倾向于快速进攻
+- **风格**: 快节奏，高压力
+- **战术**:
+  - 优先出低费高攻随从
+  - 积极攻击英雄
+  - 追求速胜
+
+### 智慧防御者 (Wise Defender)
+- **特点**: 注重防御和资源积累
+- **风格**: 稳健，后发制人
+- **战术**:
+  - 优先建立防御
+  - 合理使用资源
+  - 等待最佳时机
+
+## 📊 AI决策机制
+
+### 信息收集
+- **手牌分析**: 评估可用卡牌的价值
+- **场面判断**: 分析双方战场局势
+- **资源计算**: 考虑法力值和卡牌优势
+
+### 策略制定
+- **短期目标**: 当前回合的最优行动
+- **长期规划**: 未来几回合的战略布局
+- **风险评估**: 各种选择的成功概率
+
+### 动作执行
+- **出牌顺序**: 最优的卡牌打出序列
+- **攻击选择**: 最有效的攻击目标
+- **技能使用**: 英雄技能的最佳时机
+
+## 💡 对战AI的建议
+
+### 观察AI行为
+- 注意AI的出牌模式
+- 分析AI的攻击偏好
+- 预测AI的可能行动
+
+### 制定针对性策略
+- 利用AI的决策特点
+- 选择合适的反制战术
+- 控制游戏节奏
+
+### 心理战术
+- 制造假象诱导AI失误
+- 控制信息暴露程度
+- 在关键时刻出奇制胜
+        """
+
+        self.console.print(Panel(
+            Markdown(help_content),
+            title="📖 AI系统详解",
+            box=box.ROUNDED,
+            border_style="cyan"
+        ))
+
+        Prompt.ask("按回车键返回帮助菜单", default="")
+
+    def _show_tips_help(self):
+        """显示游戏技巧帮助"""
+        help_content = """
+# 💡 游戏策略与技巧
+
+## 🎯 核心策略原则
+
+### 1. 法力管理
+- **效率优先**: 确保每回合的法力都得到充分利用
+- **曲线规划**: 合理安排低费和高费卡牌的比例
+- **预留余地**: 为关键卡牌保留足够法力
+
+### 2. 节奏控制
+- **主动权**: 把握进攻和防守的时机
+- **响应式**: 根据对手行动调整策略
+- **压制力**: 在关键时刻施加压力
+
+### 3. 资源优势
+- **卡牌优势**: 保持手牌数量不低于对手
+- **场面控制**: 维持战场上的主动权
+- **生命管理**: 平衡进攻和自我保护
+
+## 🃏 卡牌使用技巧
+
+### 随从牌使用
+- **时机把握**:
+  - 早期：建立场面优势
+  - 中期：巩固控制和交换
+  - 后期：终结比赛或扭转局势
+
+- **位置安排**:
+  - 保护重要随从
+  - 利用嘲讽随从
+  - 考虑攻击顺序
+
+- **特效配合**:
+  - 嘲讽随从保护高价值目标
+  - 圣盾随从处理威胁单位
+  - 冲锋随从抢夺先手
+
+### 法术牌使用
+- **即时效果**: 把握使用时机
+- **combo配合**: 与其他卡牌形成连击
+- **应急用途**: 危急情况下的救命稻草
+
+## ⚔️ 战斗技巧
+
+### 攻击选择
+- **优先级判断**:
+  1. 威胁最大的敌方随从
+  2. 具有危险特效的随从
+  3.敌方英雄（在安全的情况下）
+
+- **交换计算**:
+  - 评估我方损失
+  - 考虑长远收益
+  - 避免不必要的牺牲
+
+### 防守策略
+- **嘲讽利用**: 合理布置嘲讽随从
+- **圣盾保护**: 用圣盾随从挡伤害
+- **潜行突袭**: 保持潜行随从的安全
+
+## 🎮 不同阶段策略
+
+### 早期游戏 (1-4回合)
+**目标**: 建立基础，积累资源
+- 出低费随从控制场面
+- 合理使用法术清理威胁
+- 保护英雄生命值
+
+### 中期游戏 (5-8回合)
+**目标**: 扩大优势，稳定控制
+- 出中等费用的强力随从
+- 进行有利的随从交换
+- 开始施加压力
+
+### 后期游戏 (9+回合)
+**目标**: 终结比赛，扭转局势
+- 使用高费终极卡牌
+- 寻找致命一击的机会
+- 应对对手的强力反击
+
+## 🤖 对战AI特殊技巧
+
+### AI行为分析
+- **模式识别**: 识别AI的决策模式
+- **规律利用**: 利用AI的行为规律
+- **弱点攻击**: 针对AI的策略弱点
+
+### 心理战术
+- **信息控制**: 隐藏关键信息
+- **假象制造**: 引导AI错误决策
+- **节奏变化**: 打乱AI的部署
+
+## 📈 进阶技巧
+
+### 概率计算
+- **抽牌期望**: 计算关键卡牌的抽到概率
+- **伤害预估**: 预测未来几回合的伤害输出
+- **风险评估**: 评估各种选择的成功概率
+
+### 组合战术
+- **连击配合**: 多张卡牌的连续使用
+- **特效协同**: 不同特效的配合使用
+- **时机把控**: 在最合适的时机出手
+
+### 适应性策略
+- **灵活调整**: 根据局势变化调整策略
+- **应急方案**: 准备应对突发情况的计划
+- **长期规划**: 制定多回合的战略布局
+
+## 🎯 常见错误避免
+
+### 新手常见错误
+1. **法力浪费**: 未能充分利用每回合的法力
+2. **过度进攻**: 忽视防守的重要性
+3. **资源管理**: 不合理使用关键卡牌
+4. **目标选择**: 攻击优先级判断错误
+
+### 进阶玩家误区
+1. **思维固化**: 依赖固定战术模式
+2. **信息忽视**: 忽略重要的游戏信息
+3. **情绪影响**: 让情绪影响决策判断
+4. **过度自信**: 低估对手的应对能力
+
+## 🏆 成功心态
+
+### 游戏态度
+- **学习心态**: 从每局游戏中学习经验
+- **耐心冷静**: 在压力下保持冷静思考
+- **享受过程**: 享受策略思考的乐趣
+
+### 持续进步
+- **复盘总结**: 分析游戏中的关键决策
+- **战术更新**: 不断学习和尝试新战术
+- **交流学习**: 与其他玩家交流心得
+
+记住：最好的策略是能够根据具体局势灵活调整的策略！
+        """
+
+        self.console.print(Panel(
+            Markdown(help_content),
+            title="📖 游戏策略与技巧",
+            box=box.ROUNDED,
+            border_style="green"
+        ))
+
+        Prompt.ask("按回车键返回帮助菜单", default="")
 
     def show_goodbye(self):
         """显示告别动画"""
@@ -1242,6 +1681,9 @@ class GameUIWithLive:
         elif command_type == 'attack':
             return await self._handle_attack(params)
 
+        elif command_type == 'spell':
+            return await self._handle_spell_by_name(params)
+
         elif command_type == 'end_turn':
             return await self._handle_end_turn()
 
@@ -1249,7 +1691,7 @@ class GameUIWithLive:
             error_msg = self._input_handler.format_error_message('invalid_command', f"未知命令类型: {command_type}")
             return False, error_msg, None
 
-    async def _handle_play_card(self, card_index: int) -> Tuple[bool, str, Optional[dict]]:
+    async def _handle_play_card(self, card_index: int, target: Optional[str] = None) -> Tuple[bool, str, Optional[dict]]:
         """处理出牌命令"""
         if not self.game_state or 'hand' not in self.game_state:
             return False, "❌ 游戏状态未初始化", None
@@ -1275,7 +1717,12 @@ class GameUIWithLive:
         # 返回出牌动作
         card_name = card.get('name', '未知卡牌')
         success_msg = self._input_handler.format_success_message('play_card', card_name)
-        return True, success_msg, {'action': 'play_card', 'card_index': card_index, 'card': card}
+
+        action_data = {'action': 'play_card', 'card_index': card_index, 'card': card}
+        if target:
+            action_data['target'] = target
+
+        return True, success_msg, action_data
 
     async def _handle_hero_power(self) -> Tuple[bool, str, Optional[dict]]:
         """处理英雄技能命令"""
@@ -1517,6 +1964,7 @@ def create_battlefield_component(player_field: list, opponent_field: list):
     battlefield_table.add_column("随从", style="white", width=12)
     battlefield_table.add_column("属性", style="cyan", width=8)
     battlefield_table.add_column("状态", style="yellow", width=8)
+    battlefield_table.add_column("特效", style="blue", width=8)
 
     # 玩家随从
     for minion in player_field:
@@ -1524,11 +1972,15 @@ def create_battlefield_component(player_field: list, opponent_field: list):
         attack = minion.get("attack", 0)
         health = minion.get("health", 0)
         can_attack = minion.get("can_attack", False)
+        mechanics = minion.get("mechanics", [])
 
         attributes = f"{attack}/{health}"
         status = "🗡️ 可攻" if can_attack else "😴 休眠"
 
-        battlefield_table.add_row("👤 玩家", name, attributes, status)
+        # 特效显示
+        mechanics_display = _format_mechanics_display(mechanics)
+
+        battlefield_table.add_row("👤 玩家", name, attributes, status, mechanics_display)
 
     # 对手随从
     for minion in opponent_field:
@@ -1536,13 +1988,44 @@ def create_battlefield_component(player_field: list, opponent_field: list):
         attack = minion.get("attack", 0)
         health = minion.get("health", 0)
         can_attack = minion.get("can_attack", False)
+        mechanics = minion.get("mechanics", [])
 
         attributes = f"{attack}/{health}"
         status = "⚠️ 威胁" if can_attack else "😴 休眠"
 
-        battlefield_table.add_row("🤖 对手", name, attributes, status)
+        # 特效显示
+        mechanics_display = _format_mechanics_display(mechanics)
+
+        battlefield_table.add_row("🤖 对手", name, attributes, status, mechanics_display)
 
     return battlefield_table
+
+
+def _format_mechanics_display(mechanics: list) -> str:
+    """格式化特效显示"""
+    if not mechanics:
+        return "无"
+
+    # 特效映射表
+    mechanics_map = {
+        "taunt": "🛡️嘲讽",
+        "divine_shield": "✨圣盾",
+        "stealth": "🌑潜行",
+        "ranged": "🏹远程",
+        "spell_power": "🔥法强",
+        "windfury": "💨风怒",
+        "lifesteal": "💀吸血",
+        "poisonous": "☠️剧毒",
+        "charge": "⚡冲锋"
+    }
+
+    # 转换特效为显示文本
+    display_texts = []
+    for mechanic in mechanics:
+        display_text = mechanics_map.get(mechanic, mechanic)
+        display_texts.append(display_text)
+
+    return " ".join(display_texts) if display_texts else "无"
 
 
 def create_command_panel(available_actions: list = None):
@@ -1591,6 +2074,10 @@ class UserInputHandler:
                 re.compile(r'^攻击\s*(\d+)\s*(\d+)$', re.IGNORECASE),
                 re.compile(r'^attack\s*(\d+)\s*(\d+)$', re.IGNORECASE)
             ],
+            'spell': [
+                re.compile(r'^法术\s*(.+)$', re.IGNORECASE),
+                re.compile(r'^spell\s*(.+)$', re.IGNORECASE)
+            ],
             'help': [
                 re.compile(r'^帮助$', re.IGNORECASE),
                 re.compile(r'^help$', re.IGNORECASE),
@@ -1631,6 +2118,9 @@ class UserInputHandler:
                         attacker_index = int(match.group(1))
                         target_index = int(match.group(2))
                         return True, (command, (attacker_index, target_index))
+                    elif command == 'spell':
+                        spell_name = match.group(1).strip()
+                        return True, (command, spell_name)
                     elif command in ['hero_power', 'end_turn', 'help', 'quit']:
                         return True, (command, None)
 
@@ -1908,6 +2398,7 @@ class GameUIStatic:
                     "attack": minion.attack if hasattr(minion, 'attack') else 0,
                     "health": minion.health if hasattr(minion, 'health') else 0,
                     "can_attack": getattr(minion, 'can_attack', False),
+                    "mechanics": getattr(minion, 'mechanics', []),
                     "index": i
                 })
 
@@ -1918,6 +2409,7 @@ class GameUIStatic:
                     "attack": minion.attack if hasattr(minion, 'attack') else 0,
                     "health": minion.health if hasattr(minion, 'health') else 0,
                     "can_attack": getattr(minion, 'can_attack', False),
+                    "mechanics": getattr(minion, 'mechanics', []),
                     "index": i
                 })
 
@@ -1940,7 +2432,8 @@ class GameUIStatic:
                     "field_count": len(ai_player.field)
                 },
                 "hand": hand,
-                "battlefield": battlefield
+                "battlefield": battlefield,
+                "turn_number": self.game_engine.turn_number
             }
 
         except Exception as e:
@@ -1952,8 +2445,10 @@ class GameUIStatic:
         try:
             self.console.clear()
 
-            # 渲染标题
-            self.console.print(Align.center(Text("🎮 Card Battle Arena Enhanced - 静态版", style="bold cyan")))
+            # 渲染标题（包含轮数信息）
+            turn_number = self.game_state.get("turn_number", 1)
+            title_text = f"🎮 Card Battle Arena Enhanced - 静态版 (第{turn_number}轮)"
+            self.console.print(Align.center(Text(title_text, style="bold cyan")))
             self.console.print()
 
             # 渲染各个区域
@@ -2003,22 +2498,73 @@ class GameUIStatic:
                 ]
                 for i, card in enumerate(playable_cards):
                     card_name = card.get("name", "未知卡牌")
-                    commands.append(f"{i+1}. 出牌 {card_name} (费用{card.get('cost', 0)})")
+                    commands.append(f"{len(commands)+1}. 出牌 {card_name} (费用{card.get('cost', 0)})")
 
-            # 检查是否有可攻击的随从
+            # 检查是否有可攻击的随从 - 修复攻击命令生成
             if "battlefield" in game_state:
                 player_field = game_state["battlefield"].get("player", [])
-                attackable_minions = [
-                    minion for minion in player_field
-                    if minion.get("can_attack", False)
-                ]
-                for i, minion in enumerate(attackable_minions):
-                    minion_name = minion.get("name", "随从")
-                    commands.append(f"{len(commands)+1}. 攻击 {minion_name}")
+                opponent_field = game_state["battlefield"].get("opponent", [])
+
+                attackable_minions = []
+                for i, minion in enumerate(player_field):
+                    if minion.get("can_attack", False):
+                        attackable_minions.append((i, minion))
+
+                if attackable_minions:
+                    for minion_idx, minion in attackable_minions:
+                        minion_name = minion.get("name", "随从")
+
+                        # 检查可攻击的目标
+                        available_targets = self._get_attack_targets_for_minion(minion_idx, opponent_field)
+
+                        if available_targets:
+                            if len(available_targets) == 1:
+                                target_desc = available_targets[0]
+                            else:
+                                target_desc = f"{len(available_targets)}个目标"
+
+                            commands.append(f"{len(commands)+1}. 攻击: {minion_name} → {target_desc}")
 
             # 检查是否可以使用英雄技能
             if mana >= 2:
                 commands.append(f"{len(commands)+1}. 使用英雄技能 (2法力)")
+
+            # 检查是否有可攻击的法术卡牌
+            spell_cards = []
+            for i, card in enumerate(game_state["hand"]):
+                # 检查是否为法术卡牌且有攻击力，并且法力值足够
+                is_spell = card.get("type") == "spell"
+                has_attack = card.get("attack", 0) > 0
+                can_afford = card.get("cost", 0) <= mana
+
+                if is_spell and has_attack and can_afford:
+                    # 伤害法术卡牌
+                    spell_cards.append((i, card))
+
+            if spell_cards:
+                for i, card in spell_cards:
+                    card_name = card.get("name", "法术")
+                    # 检查是否有多个目标
+                    if opponent_field:
+                        # 检查嘲讽机制
+                        taunt_minions = [m for m in opponent_field if "taunt" in m.get("mechanics", [])]
+                        if len(taunt_minions) > 0:
+                            # 有嘲讽，只能攻击嘲讽
+                            if len(taunt_minions) == 1:
+                                target_desc = f"{taunt_minions[0].get('name', '嘲讽随从')}"
+                            else:
+                                target_desc = f"{len(taunt_minions)}个嘲讽目标"
+                        else:
+                            # 没有嘲讽，可以攻击随从或英雄
+                            if len(opponent_field) == 1:
+                                target_desc = f"{opponent_field[0].get('name', '随从')}或英雄"
+                            else:
+                                target_desc = f"{len(opponent_field)+1}个目标"
+                    else:
+                        # 没有随从，只能攻击英雄
+                        target_desc = "敌方英雄"
+
+                    commands.append(f"{len(commands)+1}. 法术: {card_name} → {target_desc}")
 
         # 添加固定命令
         commands.append(f"{len(commands)+1}. 结束回合")
@@ -2027,6 +2573,35 @@ class GameUIStatic:
         commands.append(f"{len(commands)+1}. 退出游戏")
 
         return commands
+
+    def _get_attack_targets_for_minion(self, minion_idx: int, opponent_field: list) -> list:
+        """获取指定随从可攻击的目标列表"""
+        targets = []
+
+        if not opponent_field:
+            # 对手没有随从，可以攻击英雄
+            targets.append("敌方英雄")
+        else:
+            # 检查是否有嘲讽随从
+            taunt_minions = []
+            non_taunt_minions = []
+
+            for i, minion in enumerate(opponent_field):
+                mechanics = minion.get("mechanics", [])
+                if "taunt" in mechanics:
+                    taunt_minions.append(f"{minion.get('name', '随从')}({i})")
+                else:
+                    non_taunt_minions.append(f"{minion.get('name', '随从')}({i})")
+
+            # 如果有嘲讽随从，必须攻击嘲讽
+            if taunt_minions:
+                targets.extend(taunt_minions)
+            else:
+                # 没有嘲讽，可以攻击任何随从或英雄
+                targets.extend(non_taunt_minions)
+                targets.append("敌方英雄")
+
+        return targets
 
     async def process_user_input(self, input_str: str) -> Tuple[bool, str, Optional[dict]]:
         """处理用户输入（支持数字选项）"""
@@ -2062,6 +2637,9 @@ class GameUIStatic:
         elif command_type == 'attack':
             return await self._handle_attack(params)
 
+        elif command_type == 'spell':
+            return await self._handle_spell_by_name(params)
+
         elif command_type == 'end_turn':
             return await self._handle_end_turn()
 
@@ -2094,6 +2672,9 @@ class GameUIStatic:
         elif "攻击" in selected_command:
             return await self._handle_attack_from_command(selected_command)
 
+        elif "法术" in selected_command:
+            return await self._handle_spell_command(selected_command)
+
         elif "英雄技能" in selected_command:
             return await self._handle_hero_power()
 
@@ -2113,15 +2694,30 @@ class GameUIStatic:
         return False, f"❌ 无法处理命令: {selected_command}", None
 
     async def _handle_attack_from_command(self, command: str) -> Tuple[bool, str, Optional[dict]]:
-        """从命令字符串处理攻击命令"""
+        """从命令字符串处理攻击命令 - 改进版本支持目标选择"""
         try:
-            # 解析攻击命令，例如 "1. 攻击 森林狼"
-            # 提取随从名称
-            parts = command.split(". 攻击 ")
+            # 解析攻击命令，例如 "1. 攻击: 邪犬 → 石像鬼" 或 "2. 攻击: 愤怒的小鸡 → 敌方英雄"
+            if "→" not in command:
+                # 简单的攻击命令，需要用户选择目标
+                return await self._handle_attack_target_selection(command)
+
+            parts = command.split(" → ")
             if len(parts) != 2:
                 return False, f"❌ 无法解析攻击命令: {command}", None
 
-            minion_name = parts[1].strip()
+            attacker_part = parts[0].strip()
+            target_part = parts[1].strip()
+
+            # 提取随从名称 (去掉"攻击: "前缀和编号)
+            if "攻击:" in attacker_part:
+                minion_name = attacker_part.split("攻击:")[1].strip()
+            else:
+                minion_name = attacker_part
+
+            # 检查是否为多目标描述（如"3个目标"）
+            if "个目标" in target_part:
+                # 提取随从名称，进入目标选择流程
+                return await self._handle_attack_target_selection(f"攻击: {minion_name}")
 
             # 获取可攻击的随从列表
             if not self.game_state or 'battlefield' not in self.game_state:
@@ -2136,7 +2732,7 @@ class GameUIStatic:
             if not attackable_minions:
                 return False, "❌ 没有可攻击的随从", None
 
-            # 查找匹配的随从（支持部分匹配或索引）
+            # 查找匹配的随从
             selected_minion = None
             selected_index = None
 
@@ -2156,18 +2752,36 @@ class GameUIStatic:
             if selected_minion is None:
                 return False, f"❌ 找不到随从: {minion_name}", None
 
-            # 获取对手的随从作为攻击目标
+            # 解析攻击目标
             opponent_field = self.game_state['battlefield'].get('opponent', [])
 
-            if not opponent_field:
-                # 没有敌方随从，直接攻击英雄
+            if "英雄" in target_part or "敌方英雄" in target_part:
+                # 攻击英雄
                 target_info = {'type': 'hero'}
                 target_name = '敌方英雄'
             else:
-                # 选择第一个敌方随从作为目标（可以后续改进为让用户选择）
-                target_minion = opponent_field[0]
-                target_info = {'type': 'minion', 'index': 0, 'minion': target_minion}
-                target_name = target_minion.get('name', '随从')
+                # 攻击随从 - 解析目标索引
+                target_idx = None
+                target_name = target_part
+
+                # 尝试从目标描述中提取索引
+                import re
+                match = re.search(r'\((\d+)\)', target_part)
+                if match:
+                    target_idx = int(match.group(1))
+                else:
+                    # 尝试按名称匹配
+                    for i, minion in enumerate(opponent_field):
+                        if minion.get('name', '') in target_part:
+                            target_idx = i
+                            break
+
+                if target_idx is not None and target_idx < len(opponent_field):
+                    target_minion = opponent_field[target_idx]
+                    target_info = {'type': 'minion', 'index': target_idx, 'minion': target_minion}
+                    target_name = target_minion.get('name', '随从')
+                else:
+                    return False, f"❌ 找不到攻击目标: {target_part}", None
 
             attacker_name = selected_minion.get('name', '随从')
 
@@ -2182,7 +2796,115 @@ class GameUIStatic:
         except Exception as e:
             return False, f"❌ 处理攻击命令时出错: {str(e)}", None
 
-    async def _handle_play_card(self, card_index: int) -> Tuple[bool, str, Optional[dict]]:
+    async def _handle_attack_target_selection(self, command: str) -> Tuple[bool, str, Optional[dict]]:
+        """处理需要目标选择的攻击命令"""
+        try:
+            # 提取随从名称
+            if "攻击:" in command:
+                minion_name = command.split("攻击:")[1].strip()
+            else:
+                return False, f"❌ 无法解析攻击命令: {command}", None
+
+            # 获取可攻击的随从
+            player_field = self.game_state['battlefield'].get('player', [])
+            attackable_minions = [
+                (i, minion) for i, minion in enumerate(player_field)
+                if minion.get('can_attack', False)
+            ]
+
+            selected_minion = None
+            selected_index = None
+
+            for i, minion in attackable_minions:
+                if minion_name in minion.get('name', ''):
+                    selected_minion = minion
+                    selected_index = i
+                    break
+
+            if selected_minion is None:
+                return False, f"❌ 找不到随从: {minion_name}", None
+
+            # 获取可选目标
+            opponent_field = self.game_state['battlefield'].get('opponent', [])
+            available_targets = self._get_attack_targets_for_minion(selected_index, opponent_field)
+
+            if not available_targets:
+                return False, "❌ 没有可攻击的目标", None
+
+            if len(available_targets) == 1:
+                # 只有一个目标，直接攻击
+                target = available_targets[0]
+                if "英雄" in target:
+                    target_info = {'type': 'hero'}
+                    target_name = '敌方英雄'
+                else:
+                    # 解析随从目标
+                    import re
+                    match = re.search(r'\((\d+)\)', target)
+                    if match:
+                        target_idx = int(match.group(1))
+                        if target_idx < len(opponent_field):
+                            target_minion = opponent_field[target_idx]
+                            target_info = {'type': 'minion', 'index': target_idx, 'minion': target_minion}
+                            target_name = target_minion.get('name', '随从')
+                        else:
+                            return False, f"❌ 目标索引无效: {target_idx}", None
+                    else:
+                        return False, f"❌ 无法解析目标: {target}", None
+
+                attacker_name = selected_minion.get('name', '随从')
+                success_msg = self._input_handler.format_success_message('attack', f"{attacker_name} 攻击 {target_name}")
+                return True, success_msg, {
+                    'action': 'attack',
+                    'attacker_index': selected_index,
+                    'attacker': selected_minion,
+                    'target': target_info
+                }
+            else:
+                # 多个目标，需要用户选择
+                self.console.print(f"\n⚔️ {selected_minion.get('name', '随从')} 可以攻击以下目标:")
+                for i, target in enumerate(available_targets):
+                    self.console.print(f"   {i+1}. {target}")
+
+                target_choice = Prompt.ask(
+                    "请选择攻击目标",
+                    choices=[str(i+1) for i in range(len(available_targets))],
+                    default="1"
+                )
+
+                target_idx = int(target_choice) - 1
+                selected_target = available_targets[target_idx]
+
+                if "英雄" in selected_target:
+                    target_info = {'type': 'hero'}
+                    target_name = '敌方英雄'
+                else:
+                    import re
+                    match = re.search(r'\((\d+)\)', selected_target)
+                    if match:
+                        target_idx = int(match.group(1))
+                        if target_idx < len(opponent_field):
+                            target_minion = opponent_field[target_idx]
+                            target_info = {'type': 'minion', 'index': target_idx, 'minion': target_minion}
+                            target_name = target_minion.get('name', '随从')
+                        else:
+                            return False, f"❌ 目标索引无效: {target_idx}", None
+                    else:
+                        return False, f"❌ 无法解析目标: {selected_target}", None
+
+                attacker_name = selected_minion.get('name', '随从')
+                success_msg = self._input_handler.format_success_message('attack', f"{attacker_name} 攻击 {target_name}")
+                return True, success_msg, {
+                    'action': 'attack',
+                    'attacker_index': selected_index,
+                    'attacker': selected_minion,
+                    'target': target_info
+                }
+
+        except Exception as e:
+            return False, f"❌ 处理攻击目标选择时出错: {str(e)}", None
+
+    async def _handle_play_card(self, card_index: int, target: Optional[str] = None) -> Tuple[bool, str, Optional[dict]]:
         """处理出牌命令"""
         if not self.game_state or 'hand' not in self.game_state:
             return False, "❌ 游戏状态未初始化", None
@@ -2208,7 +2930,12 @@ class GameUIStatic:
         # 返回出牌动作
         card_name = card.get('name', '未知卡牌')
         success_msg = self._input_handler.format_success_message('play_card', card_name)
-        return True, success_msg, {'action': 'play_card', 'card_index': card_index, 'card': card}
+
+        action_data = {'action': 'play_card', 'card_index': card_index, 'card': card}
+        if target:
+            action_data['target'] = target
+
+        return True, success_msg, action_data
 
     async def _handle_hero_power(self) -> Tuple[bool, str, Optional[dict]]:
         """处理英雄技能命令"""
@@ -2523,7 +3250,7 @@ class GameUIStatic:
             self.game_state['opponent']['max_mana'] += 1
             self.game_state['opponent']['mana'] = self.game_state['opponent']['max_mana']
 
-        self.console.print("[green]✅ 第{self.game_state['player']['max_mana']}回合开始！[/green]")
+        self.console.print(f"[green]✅ 第{self.game_state.get('turn_number', 1)}回合开始！[/green]")
 
     async def _simulate_card_played(self, card_index: int, card: dict):
         """模拟卡牌打出（回退模式）"""
@@ -2695,6 +3422,570 @@ class GameUIStatic:
     def stop_rendering(self):
         """停止渲染（静态版本，无需特殊操作）"""
         pass
+
+    def show_help(self):
+        """显示帮助（静态版本）"""
+        while True:
+            self.console.clear()
+
+            # 帮助菜单
+            help_menu = Table(show_header=True, box=box.ROUNDED)
+            help_menu.add_column("选项", style="yellow", width=8)
+            help_menu.add_column("帮助分类", style="white")
+            help_menu.add_column("说明", style="dim")
+
+            help_menu.add_row("1", "🎮 基本操作", "[dim]游戏命令和规则说明[/dim]")
+            help_menu.add_row("2", "🃏 卡牌特效", "[dim]详细说明各种卡牌特效[/dim]")
+            help_menu.add_row("3", "🤖 AI系统", "[dim]AI难度和策略介绍[/dim]")
+            help_menu.add_row("4", "💡 游戏技巧", "[dim]策略建议和游戏提示[/dim]")
+            help_menu.add_row("0", "🔙 返回游戏", "[dim]返回游戏界面[/dim]")
+
+            self.console.print(Align.center(help_menu))
+            self.console.print()
+
+            choice = Prompt.ask(
+                "[bold green]请选择帮助分类[/bold green]",
+                choices=["1", "2", "3", "4", "0"],
+                default="0"
+            )
+
+            if choice == "0":
+                break
+            elif choice == "1":
+                self._show_basic_help()
+            elif choice == "2":
+                self._show_card_effects_help()
+            elif choice == "3":
+                self._show_ai_help()
+            elif choice == "4":
+                self._show_tips_help()
+
+    def _show_basic_help(self):
+        """显示基本操作帮助"""
+        help_content = """
+# 🎮 基本操作指南
+
+## 📋 游戏命令
+
+### 基础命令
+- **出牌 <编号>** 或 **<编号>** - 打出指定编号的手牌
+- **攻击 <随从> <目标>** - 指挥随从攻击目标
+- **技能** - 使用英雄技能（消耗2点法力）
+- **结束回合** - 结束当前回合，轮到对手行动
+- **帮助** 或 **?** - 显示帮助信息
+- **退出** - 退出游戏
+
+## 🎯 游戏规则
+
+### 法力系统
+- 每回合开始时获得1点法力值
+- 法力值上限最多为10点
+- 出牌需要消耗相应的法力值
+
+### 卡牌类型
+- **🃏 随从牌**:
+  - 上场战斗，有攻击力和生命值
+  - 刚上场的随从需要等待一回合才能攻击
+  - 可以拥有特殊特效（嘲讽、圣盾等）
+
+- **✨ 法术牌**:
+  - 使用后立即产生效果
+  - 可能造成伤害、治疗或提供其他效果
+
+### 胜利条件
+- 将对手英雄的生命值降至0即可获胜
+- 对手将你的生命值降至0则失败
+
+## 💡 界面说明
+
+### 状态面板
+- **❤️ 生命值**: 当前/最大生命值
+- **💰 法力值**: 当前可用/最大法力值
+- **🃋 手牌数**: 当前手牌数量
+- **⚔️ 随从数**: 战场上随从数量
+
+### 战场信息
+- **阵营**: 👤玩家 / 🤖对手
+- **随从**: 随从名称
+- **属性**: 攻击力/生命值
+- **状态**: 🗡️可攻击 / 😴休眠中
+- **特效**: 显示随从拥有的特殊能力
+
+### 手牌显示
+- **编号**: 卡牌的选择编号
+- **卡牌名称**: 卡牌的名称
+- **费用**: 打出此牌需要的法力值
+- **属性**: 随从的攻击/生命 或 法术的威力
+- **状态**: ✅可出 / ❌费用不足
+        """
+
+        self.console.print(Panel(
+            Markdown(help_content),
+            title="📖 基本操作指南",
+            box=box.ROUNDED,
+            border_style="blue"
+        ))
+
+        Prompt.ask("按回车键返回帮助菜单", default="")
+
+    def _show_card_effects_help(self):
+        """显示卡牌特效帮助"""
+        help_content = """
+# 🃏 卡牌特效详解
+
+## 🛡️ 防御型特效
+
+### 🛡️ 嘲讽 (Taunt)
+- **效果**: 强制敌方随从优先攻击具有嘲讽的随从
+- **策略价值**: 保护其他随从和英雄，是防御战术的核心
+- **搭配建议**: 与高血量随从配合效果更佳
+- **克制方法**: 使用法术牌或具有特效的随从处理
+
+### ✨ 圣盾 (Divine Shield)
+- **效果**: 免疫下一次受到的伤害，受到伤害后圣盾消失
+- **策略价值**: 有效对抗高攻击力单体攻击
+- **恢复方式**: 特定法术可以重新获得圣盾
+- **注意事项**: 只能抵挡一次伤害，之后消失
+
+### 🌑 潜行 (Stealth)
+- **效果**: 敌方无法选择潜行随从作为目标，攻击后解除潜行
+- **策略价值**: 保护关键随从免受法术和攻击
+- **持续时间**: 直到随从造成伤害为止
+- **克制方法**: 范围效果法术或攻击其他目标
+
+## ⚔️ 攻击型特效
+
+### ⚡ 冲锋 (Charge)
+- **效果**: 随从可以立即攻击，无需等待一回合
+- **策略价值**: 快速施加压力，抢夺节奏优势
+- **常见搭配**: 高攻击力随从
+- **风险**: 容易成为敌方目标
+
+### 💨 风怒 (Windfury)
+- **效果**: 每回合可以攻击两次
+- **策略价值**: 大幅提升输出能力
+- **注意事项**: 每次攻击都需要独立的攻击目标
+- **搭配建议**: 配合治疗或圣盾效果
+
+### 🏹 远程 (Ranged)
+- **效果**: 可以从安全距离攻击，避免受到部分反击伤害
+- **策略价值**: 安全输出，保护脆弱的随从
+- **射程**: 通常可以攻击任何敌方目标
+- **定位**: 后排输出单位
+
+## 🔥 魔法型特效
+
+### 🔥 法术强度 (Spell Power)
+- **效果**: 提升己方法术的伤害效果
+- **策略价值**: 增强法术卡牌的威力
+- **计算方式**: 通常按百分比提升法术伤害
+- **搭配**: 与伤害法术配合使用
+
+### 💀 吸血 (Lifesteal)
+- **效果**: 造成伤害的同时为英雄恢复等量生命值
+- **策略价值**: 提供持续的续航能力
+- **限制**: 只能通过攻击触发
+- **价值**: 在持久战中表现出色
+
+### ☠️ 剧毒 (Poisonous)
+- **效果**: 对随从造成任何伤害即可直接消灭目标
+- **策略价值**: 高效处理大型随从
+- **注意事项**: 对英雄无效，只对随从生效
+- **策略**: 用于清除敌方强力随从
+
+## 🎯 特殊机制
+
+### 复合特效
+许多卡牌拥有多种特效组合：
+- **嘲讽+圣盾**: 理想的防御组合
+- **冲锋+风怒**: 强大的进攻组合
+- **潜行+吸血**: 持续续航的组合
+
+### 特效互动
+- **圣盾 vs 剧毒**: 圣盾可以抵挡剧毒的即死效果
+- **嘲讽 vs 潜行**: 潜行随从无法被强制攻击嘲讽目标
+- **风怒 vs 法术强度**: 风怒随从受益于法术强度加成
+
+## 💡 策略建议
+
+### 早期游戏
+- 优先使用冲锋随从抢夺节奏
+- 利用嘲讽随从保护英雄
+- 合理使用潜行随从进行安全输出
+
+### 中期游戏
+- 圣盾随从提供稳定的场面控制
+- 风怒随从可以快速清理场面
+- 法术强度随从配合法术进行爆发
+
+### 后期游戏
+- 吸血随从提供续航能力
+- 剧毒随从处理大型威胁
+- 复合特效随从通常能决定胜负
+        """
+
+        self.console.print(Panel(
+            Markdown(help_content),
+            title="📖 卡牌特效详解",
+            box=box.ROUNDED,
+            border_style="purple"
+        ))
+
+        Prompt.ask("按回车键返回帮助菜单", default="")
+
+    def _show_ai_help(self):
+        """显示AI系统帮助"""
+        help_content = """
+# 🤖 AI系统详解
+
+## 🎯 AI难度等级
+
+### 🟢 简单难度
+- **特点**: AI经常失误，决策较为随机
+- **适合**: 新手玩家学习游戏机制
+- **行为**:
+  - 经常出不符合当前局势的牌
+  - 攻击目标选择不够优化
+  - 资源管理效率较低
+
+### 🔵 普通难度
+- **特点**: AI正常发挥，平衡的游戏体验
+- **适合**: 一般玩家练习和娱乐
+- **行为**:
+  - 基本合理的出牌顺序
+  - 正确的攻击目标选择
+  - 适度的资源管理
+
+### 🟠 困难难度
+- **特点**: AI表现出色，需要玩家认真应对
+- **适合**: 有经验的玩家挑战
+- **行为**:
+  - 优化的出牌策略
+  - 精准的攻击时机把握
+  - 高效的资源利用
+
+### 🔴 专家难度
+- **特点**: AI完美发挥，提供极限挑战
+- **适合**: 高手玩家测试策略
+- **行为**:
+  - 近乎完美的决策
+  - 复杂的战术组合
+  - 最优的资源管理
+
+## 🧠 AI策略系统
+
+### 规则AI (Rule-Based AI)
+- **原理**: 基于预设的规则和决策树
+- **特点**:
+  - 决策速度快，响应及时
+  - 行为可预测，便于学习应对
+  - 稳定性强，不会出现明显失误
+- **适用场景**:
+  - 新手教学
+  - 稳定的游戏体验
+  - 性能要求较高的环境
+
+### 混合AI (Hybrid AI)
+- **原理**: 结合规则系统和深度学习技术
+- **特点**:
+  - 更智能的决策能力
+  - 能够适应不同局势
+  - 具有一定的学习能力
+- **技术优势**:
+  - 大语言模型(LLM)加持
+  - 动态策略调整
+  - 更接近人类的思维方式
+
+## 🎭 AI个性系统
+
+### 适应性学习者 (Adaptive Learner)
+- **特点**: 根据对手行为调整策略
+- **风格**: 平衡型，能够适应各种局势
+- **优势**:
+  - 学习对手的习惯
+  - 动态调整战术
+  - 中庸但全面的策略
+
+### 激进狂战士 (Aggressive Berserker)
+- **特点**: 倾向于快速进攻
+- **风格**: 快节奏，高压力
+- **战术**:
+  - 优先出低费高攻随从
+  - 积极攻击英雄
+  - 追求速胜
+
+### 智慧防御者 (Wise Defender)
+- **特点**: 注重防御和资源积累
+- **风格**: 稳健，后发制人
+- **战术**:
+  - 优先建立防御
+  - 合理使用资源
+  - 等待最佳时机
+
+## 💡 对战AI的建议
+
+### 观察AI行为
+- 注意AI的出牌模式
+- 分析AI的攻击偏好
+- 预测AI的可能行动
+
+### 制定针对性策略
+- 利用AI的决策特点
+- 选择合适的反制战术
+- 控制游戏节奏
+
+### 心理战术
+- 制造假象诱导AI失误
+- 控制信息暴露程度
+- 在关键时刻出奇制胜
+        """
+
+        self.console.print(Panel(
+            Markdown(help_content),
+            title="📖 AI系统详解",
+            box=box.ROUNDED,
+            border_style="cyan"
+        ))
+
+        Prompt.ask("按回车键返回帮助菜单", default="")
+
+    def _show_tips_help(self):
+        """显示游戏技巧帮助"""
+        help_content = """
+# 💡 游戏策略与技巧
+
+## 🎯 核心策略原则
+
+### 1. 法力管理
+- **效率优先**: 确保每回合的法力都得到充分利用
+- **曲线规划**: 合理安排低费和高费卡牌的比例
+- **预留余地**: 为关键卡牌保留足够法力
+
+### 2. 节奏控制
+- **主动权**: 把握进攻和防守的时机
+- **响应式**: 根据对手行动调整策略
+- **压制力**: 在关键时刻施加压力
+
+### 3. 资源优势
+- **卡牌优势**: 保持手牌数量不低于对手
+- **场面控制**: 维持战场上的主动权
+- **生命管理**: 平衡进攻和自我保护
+
+## 🃏 卡牌使用技巧
+
+### 随从牌使用
+- **时机把握**:
+  - 早期：建立场面优势
+  - 中期：巩固控制和交换
+  - 后期：终结比赛或扭转局势
+
+- **位置安排**:
+  - 保护重要随从
+  - 利用嘲讽随从
+  - 考虑攻击顺序
+
+- **特效配合**:
+  - 嘲讽随从保护高价值目标
+  - 圣盾随从处理威胁单位
+  - 冲锋随从抢夺先手
+
+### 法术牌使用
+- **即时效果**: 把握使用时机
+- **combo配合**: 与其他卡牌形成连击
+- **应急用途**: 危急情况下的救命稻草
+
+## ⚔️ 战斗技巧
+
+### 攻击选择
+- **优先级判断**:
+  1. 威胁最大的敌方随从
+  2. 具有危险特效的随从
+  3.敌方英雄（在安全的情况下）
+
+- **交换计算**:
+  - 评估我方损失
+  - 考虑长远收益
+  - 避免不必要的牺牲
+
+### 防守策略
+- **嘲讽利用**: 合理布置嘲讽随从
+- **圣盾保护**: 用圣盾随从挡伤害
+- **潜行突袭**: 保持潜行随从的安全
+
+## 💡 快速上手建议
+
+1. **合理管理法力资源**
+2. **观察对手的策略模式**
+3. **平衡进攻和防守**
+4. **利用卡牌的特殊效果**
+5. **保持耐心，享受游戏！**
+
+记住：最好的策略是能够根据具体局势灵活调整的策略！
+        """
+
+        self.console.print(Panel(
+            Markdown(help_content),
+            title="📖 游戏策略与技巧",
+            box=box.ROUNDED,
+            border_style="green"
+        ))
+
+        Prompt.ask("按回车键返回帮助菜单", default="")
+
+    async def _handle_spell_command(self, command: str) -> Tuple[bool, str, Optional[dict]]:
+        """从命令字符串处理法术命令"""
+        try:
+            # 解析法术命令，例如 "1. 法术: 火球术 → 石像鬼"
+            if "→" not in command:
+                # 简单的法术命令，需要用户选择目标
+                return await self._handle_spell_target_selection(command)
+
+            parts = command.split(" → ")
+            if len(parts) != 2:
+                return False, f"❌ 无法解析法术命令: {command}", None
+
+            spell_part = parts[0].strip()
+            target_part = parts[1].strip()
+
+            # 提取法术名称 (去掉"法术: "前缀和编号)
+            if "法术:" in spell_part:
+                spell_name = spell_part.split("法术:")[1].strip()
+            else:
+                spell_name = spell_part
+
+            # 检查是否为多目标描述
+            if "个目标" in target_part:
+                return await self._handle_spell_target_selection(f"法术: {spell_name}")
+
+            # 解析攻击目标
+            if "英雄" in target_part or "敌方英雄" in target_part:
+                target = "英雄"
+            else:
+                # 尝试从目标描述中提取索引
+                import re
+                match = re.search(r'\((\d+)\)', target_part)
+                if match:
+                    target_idx = int(match.group(1))
+                    target = f"随从{target_idx}"
+                else:
+                    target = target_part
+
+            return await self._handle_spell_by_name_with_target(spell_name, target)
+
+        except Exception as e:
+            return False, f"❌ 法术命令处理异常: {str(e)}", None
+
+    async def _handle_spell_by_name(self, spell_name: str) -> Tuple[bool, str, Optional[dict]]:
+        """根据法术名称处理法术命令"""
+        if not self.game_state or 'hand' not in self.game_state:
+            return False, "❌ 游戏状态未初始化", None
+
+        # 在手牌中查找法术卡牌
+        spell_card = None
+        spell_index = None
+        for i, card in enumerate(self.game_state["hand"]):
+            if (card.get("type") == "spell" and
+                card.get("attack", 0) > 0 and
+                spell_name in card.get("name", "")):
+                spell_card = card
+                spell_index = i
+                break
+
+        if spell_card is None:
+            return False, f"❌ 找不到法术卡牌: {spell_name}", None
+
+        # 检查法力值是否足够
+        player_mana = self.game_state.get("player", {}).get("mana", 0)
+        card_cost = spell_card.get("cost", 0)
+        if card_cost > player_mana:
+            return False, f"❌ 法力值不足，需要 {card_cost} 点法力", None
+
+        # 使用已有的出牌逻辑
+        return await self._handle_play_card(spell_index)
+
+    async def _handle_spell_by_name_with_target(self, spell_name: str, target: str) -> Tuple[bool, str, Optional[dict]]:
+        """根据法术名称和目标处理法术命令"""
+        if not self.game_state or 'hand' not in self.game_state:
+            return False, "❌ 游戏状态未初始化", None
+
+        # 在手牌中查找法术卡牌
+        spell_card = None
+        spell_index = None
+        for i, card in enumerate(self.game_state["hand"]):
+            if (card.get("type") == "spell" and
+                card.get("attack", 0) > 0 and
+                spell_name in card.get("name", "")):
+                spell_card = card
+                spell_index = i
+                break
+
+        if spell_card is None:
+            return False, f"❌ 找不到法术卡牌: {spell_name}", None
+
+        # 检查法力值是否足够
+        player_mana = self.game_state.get("player", {}).get("mana", 0)
+        card_cost = spell_card.get("cost", 0)
+        if card_cost > player_mana:
+            return False, f"❌ 法力值不足，需要 {card_cost} 点法力", None
+
+        # 使用已有的出牌逻辑，并提供目标
+        return await self._handle_play_card(spell_index, target)
+
+    async def _handle_spell_target_selection(self, command: str) -> Tuple[bool, str, Optional[dict]]:
+        """处理法术目标选择"""
+        # 提取法术名称
+        if "法术:" in command:
+            spell_name = command.split("法术:")[1].strip()
+        else:
+            spell_name = command
+
+        # 获取可用目标
+        opponent_field = self.game_state.get('battlefield', {}).get('opponent', [])
+        targets = []
+
+        # 添加英雄目标
+        targets.append(("英雄", "敌方英雄"))
+
+        # 添加随从目标
+        for i, minion in enumerate(opponent_field):
+            target_name = minion.get('name', f'随从{i}')
+            targets.append((f"随从{i}", target_name))
+
+        if not targets:
+            return False, "❌ 没有可用的攻击目标", None
+
+        # 构建选择菜单
+        from rich.console import Console
+        from rich.table import Table
+        from rich.panel import Panel
+        from rich.prompt import IntPrompt
+
+        console = Console()
+        console.print()
+        console.print(Panel(
+            f"[bold yellow]🎯 选择 {spell_name} 的目标[/bold yellow]",
+            box=box.ROUNDED,
+            border_style="yellow"
+        ))
+
+        # 创建目标选择表格
+        target_table = Table(show_header=True, box=box.ROUNDED)
+        target_table.add_column("选项", style="cyan", width=8)
+        target_table.add_column("目标", style="white")
+
+        for i, (target_key, target_name) in enumerate(targets):
+            target_table.add_row(f"{i+1}", target_name)
+
+        console.print(target_table)
+
+        # 获取用户选择
+        choice = IntPrompt.ask("请选择目标", choices=[str(i+1) for i in range(len(targets))])
+
+        if 1 <= choice <= len(targets):
+            selected_target = targets[choice-1][0]
+            return await self._handle_spell_by_name_with_target(spell_name, selected_target)
+        else:
+            return False, "❌ 无效的目标选择", None
 
 
 # ============================================================================

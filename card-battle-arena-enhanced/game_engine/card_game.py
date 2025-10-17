@@ -292,13 +292,24 @@ class CardGame:
             Card("霜狼步兵", 2, 2, 3, "minion", ["taunt"], "🛡️ 诺森德的精锐步兵，身披重甲守护前线"),
             Card("铁喙猫头鹰", 3, 2, 2, "minion", ["taunt"], "🦉 夜空中的猎手，锐利的铁喙撕裂敌人"),
             Card("狼人渗透者", 2, 3, 2, "minion", ["stealth"], "🐺 月影下的刺客，悄无声息地接近目标"),
+            # 重新设计的1费随从池 - 增加多样性和策略选择
             Card("石像鬼", 1, 1, 1, "minion", ["divine_shield"], "🗿 古老守护者，神圣护盾保护其免受首次伤害"),
+            Card("银色侍从", 1, 1, 1, "minion", ["divine_shield"], "⚔️ 银色军团的新兵，装备精良护甲"),
+            Card("血帆海盗", 1, 2, 1, "minion", [], "🏴‍☠️ 亡命之徒，攻击力强但血量脆弱"),
+            Card("愤怒的小鸡", 1, 1, 1, "minion", [], "🐔 看似弱小，但充满攻击性"),
+            Card("月盗", 1, 1, 2, "minion", ["stealth"], "🌑 影子中的窃贼，难以被锁定"),
+            Card("鱼人斥候", 1, 1, 1, "minion", ["ranged"], "🐠 水生侦察兵，可远程攻击"),
+            Card("工程学徒", 1, 1, 2, "minion", [], "🔧 年轻的工程师，结构坚固"),
+            Card("邪犬", 1, 2, 1, "minion", [], "👹 恶魔猎犬，凶猛但缺乏防御"),
+            Card("光明之泉", 1, 0, 2, "minion", [], "✨ 治疗之泉，每回合恢复血量"),
+            Card("暗影潜伏者", 1, 1, 1, "minion", ["stealth"], "🌑 潜行刺客，出其不意"),
+
+            # 2费随从牌
             Card("铁炉堡火枪手", 2, 2, 2, "minion", ["ranged"], "🔫 矮人神射手，远程精准打击敌人"),
             Card("暴风雪骑士", 6, 6, 5, "minion", ["taunt", "divine_shield"], "🌨️ 暴风城的精英骑士，身披圣铠手持坚盾"),
             Card("铁炉堡士兵", 2, 1, 4, "minion", ["taunt"], "⚔️ 铁炉堡的忠诚士兵，誓死守护阵地"),
             Card("暗影巫师", 3, 2, 3, "minion", ["spell_power"], "🧙‍♂️ 掌控暗影力量的神秘巫师"),
-            # 新增更多随从牌
-            Card("森林狼", 1, 1, 1, "minion", [], "🐺 野性的森林狼，凶猛的掠食者"),
+            # 新增更多随从牌 - 移除重复的森林狼，增加多样性
             Card("鹰身女妖", 2, 2, 1, "minion", ["ranged"], "🦅 天空的猎手，远程攻击敌人"),
             Card("岩石元素", 4, 3, 5, "minion", ["taunt"], "🗿 坚固的岩石守护者"),
             Card("火焰元素", 3, 4, 4, "minion", [], "🔥 燃烧的元素，攻击力强大"),
@@ -326,28 +337,37 @@ class CardGame:
         ]
 
     def _initial_draw(self):
-        """初始抽牌 - 确保开局高可用性"""
+        """初始抽牌 - 确保开局高可用性，防止重复"""
         for player in self.players:
+            drawn_card_names = set()  # 记录已抽取的卡牌名称，防止重复
+
             for i in range(3):
                 if player.deck_size > 0:
                     # 按费用分层抽牌，确保前期可用
                     if i == 0:
                         # 第一张牌：必须是1费随从
-                        one_cost_minions = [card for card in self.card_pool
-                                            if card.card_type == "minion" and card.cost == 1]
-                        card = random.choice(one_cost_minions) if one_cost_minions else self._fallback_card()
+                        available_minions = [card for card in self.card_pool
+                                           if card.card_type == "minion" and card.cost == 1
+                                           and get_card_name(card) not in drawn_card_names]
+                        card = random.choice(available_minions) if available_minions else self._fallback_card()
                     elif i == 1:
                         # 第二张牌：优先1费，其次是1-2费
-                        one_cost_cards = [card for card in self.card_pool if card.cost == 1]
+                        one_cost_cards = [card for card in self.card_pool
+                                         if card.cost == 1 and get_card_name(card) not in drawn_card_names]
                         if one_cost_cards:
                             card = random.choice(one_cost_cards)
                         else:
-                            two_cost_cards = [card for card in self.card_pool if card.cost == 2]
+                            two_cost_cards = [card for card in self.card_pool
+                                            if card.cost == 2 and get_card_name(card) not in drawn_card_names]
                             card = random.choice(two_cost_cards) if two_cost_cards else self._fallback_card()
                     else:
                         # 第三张牌：优先1-2费，确保至少2张可用牌
-                        early_playable = [card for card in self.card_pool if card.cost <= 2]
+                        early_playable = [card for card in self.card_pool
+                                        if card.cost <= 2 and get_card_name(card) not in drawn_card_names]
                         card = random.choice(early_playable) if early_playable else self._fallback_card()
+
+                    # 记录已抽取的卡牌名称
+                    drawn_card_names.add(get_card_name(card))
 
                     draw_result = player.draw_card(card)
                     if not draw_result["success"]:
@@ -381,14 +401,24 @@ class CardGame:
         return self.players[1 - self.current_player_idx]
 
     def _smart_draw_card(self, player: Player) -> Card:
-        """智能抽牌系统 - 平衡随从和法术比例"""
+        """智能抽牌系统 - 平衡随从和法术比例，防止重复"""
         # 统计手牌中的随从和法术数量
         minion_count = sum(1 for card in player.hand if card.card_type == "minion")
         spell_count = sum(1 for card in player.hand if card.card_type == "spell")
 
-        # 分离卡牌池中的随从和法术
-        minions = [card for card in self.card_pool if card.card_type == "minion"]
-        spells = [card for card in self.card_pool if card.card_type == "spell"]
+        # 获取手牌中已有卡牌的名称集合，防止重复
+        hand_card_names = {get_card_name(card) for card in player.hand}
+
+        # 分离卡牌池中的随从和法术，并过滤掉已有的卡牌
+        minions = [card for card in self.card_pool
+                  if card.card_type == "minion" and get_card_name(card) not in hand_card_names]
+        spells = [card for card in self.card_pool
+                 if card.card_type == "spell" and get_card_name(card) not in hand_card_names]
+
+        # 如果过滤后没有可选卡牌，则允许重复（备用方案）
+        if not minions and not spells:
+            minions = [card for card in self.card_pool if card.card_type == "minion"]
+            spells = [card for card in self.card_pool if card.card_type == "spell"]
 
         # 智能抽牌策略
         if minion_count < spell_count - 1:
@@ -409,17 +439,36 @@ class CardGame:
         elif card_type == "spell" and spells:
             return random.choice(spells)
         else:
-            # 备用方案：随机选择
-            return random.choice(self.card_pool)
+            # 备用方案：从可用卡牌中随机选择
+            available_cards = minions + spells if (minions + spells) else self.card_pool
+            return random.choice(available_cards)
+
+    def _cleanup_dead_minions(self, player: Player) -> List[str]:
+        """清理生命值<=0的随从，返回被移除的随从名称列表"""
+        dead_minions = []
+        # 使用反向迭代来安全删除元素
+        for minion in player.field[:]:  # 创建列表副本
+            if get_card_health(minion) <= 0:
+                dead_minions.append(get_card_name(minion))
+                player.field.remove(minion)
+                logger.debug(f"💀 {get_card_name(minion)} 因生命值耗尽被移除")
+        return dead_minions
 
     def start_turn(self):
         """开始新的回合"""
         current = self.get_current_player()
         current.start_turn()
 
-        # 激活场上随从的攻击状态
+        # 清理死亡随从
+        dead_minions = self._cleanup_dead_minions(current)
+        if dead_minions:
+            logger.info(f"🧹 清理死亡随从: {', '.join(dead_minions)}")
+
+        # 激活场上随从的攻击状态 - 确保随从有正确的攻击状态
         for minion in current.field:
-            minion.can_attack = True
+            ensure_minion_attack_state(minion)
+            minion.can_attack = True  # 新回合开始时，所有随从都可以攻击
+            logger.debug(f"  ⚔️ {get_card_name(minion)} 获得攻击能力")
 
         # 智能抽牌系统 - 平衡随从和法术比例
         if current.deck_size > 0:
@@ -441,8 +490,8 @@ class CardGame:
         self.turn_number += 1
         logger.info(f"🔄 回合 {self.turn_number} - {current.name} 回合")
 
-    def play_card(self, player_idx: int, card_idx: int) -> Dict[str, Any]:
-        """打出卡牌"""
+    def play_card(self, player_idx: int, card_idx: int, target: Optional[str] = None) -> Dict[str, Any]:
+        """打出卡牌（支持目标选择）"""
         if player_idx != self.current_player_idx:
             return {"success": False, "message": "不是你的回合"}
 
@@ -477,6 +526,24 @@ class CardGame:
         elif card.card_type == "spell":
             # 法术效果
             opponent = self.get_opponent()
+
+            # 检查是否需要目标选择
+            if card.attack > 0 and target is None and opponent.field:
+                # 伤害法术且有多个可选目标，返回需要选择目标
+                targets = self._get_spell_targets(card, player, opponent)
+                if len(targets) > 1:
+                    # 需要用户选择目标
+                    return {
+                        "success": False,
+                        "need_target_selection": True,
+                        "card": card,
+                        "available_targets": targets,
+                        "message": f"请选择 {get_card_name(card)} 的目标"
+                    }
+                elif len(targets) == 1:
+                    # 只有一个目标，自动选择
+                    target = targets[0]
+
             if "draw_cards" in card.mechanics:
                 # 抽牌法术
                 cards_drawn = 0
@@ -512,9 +579,11 @@ class CardGame:
                     result["message"] += "，但没有随从可以返回"
                     logger.info(f"  🌙 {result['message']}")
             elif card.attack > 0:
-                # 伤害法术
-                opponent.health -= card.attack
-                result["message"] += f"，造成 {card.attack} 点伤害"
+                # 伤害法术 - 使用选定的目标
+                damage_result = self._execute_spell_damage(card, player, opponent, target)
+                result["message"] += damage_result["message"]
+                if not damage_result["success"]:
+                    return damage_result
                 logger.info(f"  🔥 {result['message']}")
             elif card.attack < 0:
                 # 治疗法术
@@ -526,6 +595,108 @@ class CardGame:
         self._check_game_over()
 
         return result
+
+    def _get_spell_targets(self, card, player, opponent) -> List[str]:
+        """获取法术的可选目标"""
+        targets = []
+
+        if card.attack <= 0:
+            # 非伤害法术不需要目标
+            return targets
+
+        # 伤害法术可以攻击的目标
+        # 检查是否有嘲讽随从
+        taunt_minions = [i for i, m in enumerate(opponent.field) if "taunt" in m.mechanics]
+
+        if taunt_minions:
+            # 有嘲讽随从，只能攻击嘲讽
+            for idx in taunt_minions:
+                minion = opponent.field[idx]
+                targets.append(f"随从_{idx}")
+        else:
+            # 没有嘲讽，可以攻击所有随从和英雄
+            for i in range(len(opponent.field)):
+                targets.append(f"随从_{i}")
+
+            # 可以攻击英雄
+            targets.append("英雄")
+
+        return targets
+
+    def _execute_spell_damage(self, card, player, opponent, target: Optional[str]) -> Dict[str, Any]:
+        """执行法术伤害效果"""
+        if target is None:
+            # 默认攻击英雄
+            target = "英雄"
+
+        if target == "英雄":
+            # 攻击英雄
+            opponent.health -= card.attack
+            return {
+                "success": True,
+                "message": f"，造成 {card.attack} 点伤害到英雄"
+            }
+        elif target.startswith("随从_"):
+            try:
+                target_idx = int(target.split("_")[1])
+                if target_idx >= len(opponent.field):
+                    return {"success": False, "message": f"无效的目标随从索引: {target_idx}"}
+
+                target_minion = opponent.field[target_idx]
+
+                # 检查是否必须攻击嘲讽
+                taunt_minions = [m for m in opponent.field if "taunt" in m.mechanics]
+                if taunt_minions and target_minion not in taunt_minions:
+                    return {"success": False, "message": "必须先攻击嘲讽随从"}
+
+                # 造成伤害
+                original_health = target_minion.health
+                target_minion.health -= card.attack
+
+                message = f"，对 {get_card_name(target_minion)} 造成 {card.attack} 点伤害"
+                if target_minion.health <= 0:
+                    opponent.field.remove(target_minion)
+                    message += f"，{get_card_name(target_minion)} 被击败"
+
+                return {
+                    "success": True,
+                    "message": message
+                }
+
+            except (IndexError, ValueError) as e:
+                return {"success": False, "message": f"目标解析错误: {str(e)}"}
+        elif target.startswith("随从") and "_" not in target:
+            # 支持 "随从0" 格式
+            try:
+                target_idx = int(target[2:])  # 跳过 "随从"
+                if target_idx >= len(opponent.field):
+                    return {"success": False, "message": f"无效的目标随从索引: {target_idx}"}
+
+                target_minion = opponent.field[target_idx]
+
+                # 检查是否必须攻击嘲讽
+                taunt_minions = [m for m in opponent.field if "taunt" in m.mechanics]
+                if taunt_minions and target_minion not in taunt_minions:
+                    return {"success": False, "message": "必须先攻击嘲讽随从"}
+
+                # 造成伤害
+                original_health = target_minion.health
+                target_minion.health -= card.attack
+
+                message = f"，对 {get_card_name(target_minion)} 造成 {card.attack} 点伤害"
+                if target_minion.health <= 0:
+                    opponent.field.remove(target_minion)
+                    message += f"，{get_card_name(target_minion)} 被击败"
+
+                return {
+                    "success": True,
+                    "message": message
+                }
+
+            except (IndexError, ValueError) as e:
+                return {"success": False, "message": f"目标解析错误: {str(e)}"}
+        else:
+            return {"success": False, "message": f"无效的法术目标: {target}"}
 
     def use_hero_power(self, player_idx: int) -> Dict[str, Any]:
         """使用英雄技能"""
@@ -715,6 +886,16 @@ class CardGame:
                             if minion.health <= 0:
                                 current.field.remove(minion)
 
+        # 战斗结束后清理所有死亡随从
+        current_dead = self._cleanup_dead_minions(current)
+        opponent_dead = self._cleanup_dead_minions(opponent)
+
+        if current_dead or opponent_dead:
+            if current_dead:
+                messages.append(f"我方阵亡: {', '.join(current_dead)}")
+            if opponent_dead:
+                messages.append(f"敌方阵亡: {', '.join(opponent_dead)}")
+
         return messages
 
     def quick_play_card(self, player_idx: int, card_index: int) -> Dict[str, Any]:
@@ -875,6 +1056,10 @@ class CardGame:
 
         return False
 
+    def get_winner(self) -> Optional[str]:
+        """获取游戏胜利者"""
+        return self.winner
+
     def get_game_state(self) -> Dict[str, Any]:
         """获取当前游戏状态"""
         current = self.get_current_player()
@@ -1010,11 +1195,11 @@ class CardGame:
                 col_widths = calculate_table_widths(terminal_width, min_widths, total_min_width)
 
                 hand_table = Table(title="🃏 你的手牌", show_header=True)
-                hand_table.add_column("#", style="yellow", justify="right")
-                hand_table.add_column("卡牌", style="bold white", justify="left")
-                hand_table.add_column("费", style="blue", justify="center")
-                hand_table.add_column("属性", style="red", justify="center")
-                hand_table.add_column("状态", style="green", justify="center")
+                hand_table.add_column("#", style="yellow", justify="right", width=col_widths["index"])
+                hand_table.add_column("卡牌", style="bold white", justify="left", width=col_widths["name"])
+                hand_table.add_column("费", style="blue", justify="center", width=col_widths["cost"])
+                hand_table.add_column("属性", style="red", justify="center", width=col_widths["stats"])
+                hand_table.add_column("状态", style="green", justify="center", width=col_widths["playable"])
 
                 for card in current["hand"]:
                     # 简化状态显示
@@ -1039,10 +1224,12 @@ class CardGame:
 
                     # 卡牌名称（包含类型符号）
                     card_name_with_type = f"{type_symbol} {card['name']}"
+                    # 使用智能截断确保卡牌名称不会超出列宽
+                    card_name_display = truncate_text(card_name_with_type, col_widths["name"] - 2)
 
                     hand_table.add_row(
                         f"[yellow]{card['index']}[/yellow]",
-                        f"[bold]{card_name_with_type}[/bold]",
+                        f"[bold]{card_name_display}[/bold]",
                         f"[blue]{card['cost']}[/blue]",
                         stats,  # emoji属性显示
                         f"[green]{status}[/green]"
